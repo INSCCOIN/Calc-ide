@@ -45,6 +45,8 @@ add_executable(calcide
     src/main.c
     src/shell.c
     src/editor.c
+    src/tracker.c
+    src/xfer.c
     src/console.c
     src/lineedit.c
     src/config.c

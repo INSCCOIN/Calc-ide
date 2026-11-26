@@ -16,6 +16,11 @@
  *   V0..V9          channel volume (default 7)
  *   [ ... ]x3       repeat (nesting allowed)
  *   @/path.song     play a song file (see play_file)
+ *   AT20 RL150      attack and release in ms (AT0 RL0 = the default click-free envelope)
+ *   VB0..VB9        vibrato depth (0 = off)
+ *   TP+2 TP-5 TP0   transpose notes (not drums) by semitones
+ *   C4~G4/2         slide from C4 to G4 over the note
+ *   C4/16*3         a length times 3 (three sixteenths)
  *
  * A4 is 440 Hz. The break key stops playback.
  */
@@ -61,7 +66,12 @@ typedef struct {
     uint16_t lfsr;
     int prev;               /* for the hi-hat's high-pass */
     int done;
+    int32_t atk, rel;       /* envelope in samples; 0 = default */
+    int vib, tp;            /* vibrato depth 0-9, transpose in semitones */
+    uint32_t lph, inc2;     /* vibrato phase; slide target (0 = none) */
 } Chan;
+
+static vfile *wav_out;      /* when set, synth() renders into this file */
 
 /* ------------------------------------------------------------------ */
 /* text: song files and [ ]xN repeats                                  */
@@ -118,7 +128,7 @@ static char *expand(const char *in)
 
 /* A song file: '#' comments; "N: notes" lines add to channel N (1-4);
  * other lines go to channel 1. Channels are joined with '|'. */
-static char *load_song(const char *path)
+static char *load_song_k(const char *path, int keep)
 {
     int len, ch, i;
     char *txt = vfs_load(path, &len, 0), *line, *nl;
@@ -154,15 +164,20 @@ static char *load_song(const char *path)
     out = (char *)malloc(total + 1);
     if (out) {
         out[0] = 0;
-        for (i = 0; i < MAXCH; i++) {
-            if (!clen[i]) continue;
-            if (out[0]) strcat(out, "|");
-            strcat(out, chan[i]);
+        int last = MAXCH - 1, first = 1;
+        while (keep && last > 0 && !clen[last]) last--;
+        for (i = 0; i <= last; i++) {
+            if (!clen[i] && !keep) continue;
+            if (!first) strcat(out, "|");
+            first = 0;
+            if (clen[i]) strcat(out, chan[i]);
         }
     }
     for (i = 0; i < MAXCH; i++) free(chan[i]);
     return out;
 }
+
+static char *load_song(const char *path) { return load_song_k(path, 0); }
 
 /* ------------------------------------------------------------------ */
 /* parsing one event                                                   */
@@ -175,19 +190,57 @@ static int32_t decay_k(int ms)
     return (int32_t)(k * 65536.0);
 }
 
+static uint32_t note_inc(int oct, int semis)
+{
+    int k = (oct - 4) * 12 + semis - 9;
+    double hz = 440.0 * pow(2.0, k / 12.0);
+    if (hz > SR / 2.5) hz = SR / 2.5;
+    return (uint32_t)(hz * 4294967296.0 / SR);
+}
+
+/* a note name: letter, # or b, optional octave */
+static int pitch(const char **pp, int *semis, int *oct, int defoct)
+{
+    static const int base[7] = {9, 11, 0, 2, 4, 5, 7};   /* A B C D E F G */
+    const char *p = *pp;
+    if (*p < 'A' || *p > 'G') return -1;
+    *semis = base[*p - 'A'];
+    p++;
+    if (*p == '#') { (*semis)++; p++; }
+    else if (*p == 'B' && (isdigit((unsigned char)p[1]) || p[1] == '/' || p[1] == '.' || p[1] == '*' || p[1] == '~' || !p[1])) { (*semis)--; p++; }
+    *oct = defoct;
+    if (isdigit((unsigned char)*p)) *oct = *p++ - '0';
+    *pp = p;
+    return 0;
+}
+
 /* the next note, rest or drum of a channel; 0 at the end, -1 on error */
 static int next_event(Chan *c)
 {
     for (;;) {
-        char tok[16];
-        int n = 0, len, dotted = 0, semis = -2, oct, drum = D_NONE;
+        char tok[24];
+        int n = 0, len, dotted = 0, semis = -2, oct, drum = D_NONE, mul = 1, semis2 = -2, oct2 = 0;
         const char *p;
         while (*c->p == ' ' || *c->p == ',' || *c->p == '\t' || *c->p == '\n' || *c->p == '\r') c->p++;
         if (!*c->p || *c->p == '|') return 0;
-        while (*c->p && *c->p != ' ' && *c->p != ',' && *c->p != '\t' && *c->p != '\n' && *c->p != '|' && n < 15)
+        while (*c->p && *c->p != ' ' && *c->p != ',' && *c->p != '\t' && *c->p != '\n' && *c->p != '|' && n < 23)
             tok[n++] = (char)toupper((unsigned char)*c->p++);
         tok[n] = 0;
         p = tok;
+        if ((p[0] == 'A' && p[1] == 'T' && isdigit((unsigned char)p[2])) ||
+            (p[0] == 'R' && p[1] == 'L' && isdigit((unsigned char)p[2]))) {
+            int ms = atoi(p + 2);
+            if (ms > 5000) ms = 5000;
+            if (p[0] == 'A') c->atk = (int32_t)ms * SR / 1000; else c->rel = (int32_t)ms * SR / 1000;
+            continue;
+        }
+        if (p[0] == 'V' && p[1] == 'B' && isdigit((unsigned char)p[2]) && !p[3]) { c->vib = p[2] - '0'; continue; }
+        if (p[0] == 'T' && p[1] == 'P' && (p[2] == '+' || p[2] == '-' || isdigit((unsigned char)p[2]))) {
+            int v = atoi(p + 2 + (p[2] == '+'));
+            if (v < -48 || v > 48) { snprintf(err, sizeof err, "bad transpose '%s'", tok); return -1; }
+            c->tp = v;
+            continue;
+        }
         /* drums first: their names overlap tempo, octave and note letters */
         if (!strncmp(p, "SN", 2)) { drum = D_SNARE; p += 2; }
         else if (!strncmp(p, "HH", 2)) { drum = D_HAT; p += 2; }
@@ -214,24 +267,21 @@ static int next_event(Chan *c)
             else { snprintf(err, sizeof err, "bad setting '%s'", tok); return -1; }
             continue;
         }
+        oct = c->defoct;
         if (drum == D_NONE) {
             if (*p == 'R') { semis = -1; p++; }
-            else {
-                static const int base[7] = {9, 11, 0, 2, 4, 5, 7};   /* A B C D E F G */
-                if (*p < 'A' || *p > 'G') { snprintf(err, sizeof err, "bad note '%s'", tok); return -1; }
-                semis = base[*p - 'A'];
+            else if (pitch(&p, &semis, &oct, c->defoct) < 0) { snprintf(err, sizeof err, "bad note '%s'", tok); return -1; }
+            if (semis >= 0 && *p == '~') {
                 p++;
-                if (*p == '#') { semis++; p++; }
-                else if (*p == 'B' && (isdigit((unsigned char)p[1]) || p[1] == '/' || p[1] == '.' || !p[1])) { semis--; p++; }
+                if (pitch(&p, &semis2, &oct2, oct) < 0) { snprintf(err, sizeof err, "bad slide '%s'", tok); return -1; }
             }
         }
-        oct = c->defoct;
-        if (drum == D_NONE && semis >= -1 && isdigit((unsigned char)*p)) oct = *p++ - '0';
         len = c->deflen;
         if (*p == '/') { len = atoi(p + 1); p++; while (isdigit((unsigned char)*p)) p++; }
+        if (*p == '*') { mul = atoi(p + 1); p++; while (isdigit((unsigned char)*p)) p++; }
         if (*p == '.') { dotted = 1; p++; }
-        if (*p || len <= 0 || len > 64) { snprintf(err, sizeof err, "bad note '%s'", tok); return -1; }
-        c->len = (int32_t)((int64_t)SR * 240 / c->bpm / len);
+        if (*p || len <= 0 || len > 64 || mul < 1 || mul > 256) { snprintf(err, sizeof err, "bad note '%s'", tok); return -1; }
+        c->len = (int32_t)((int64_t)SR * 240 * mul / c->bpm / len);
         if (dotted) c->len += c->len / 2;
         if (c->len < 1) c->len = 1;
         c->left = c->len;
@@ -239,9 +289,8 @@ static int next_event(Chan *c)
         c->drum = drum;
         if (drum == D_NONE && semis == -1) { c->drum = -1; return 1; }
         if (drum == D_NONE) {
-            int k = (oct - 4) * 12 + semis - 9;
-            double hz = 440.0 * pow(2.0, k / 12.0);
-            c->inc = (uint32_t)(hz * 4294967296.0 / SR);
+            c->inc = note_inc(oct, semis + c->tp);
+            c->inc2 = semis2 >= 0 ? note_inc(oct2, semis2 + c->tp) : 0;
             return 1;
         }
         /* drum envelopes */
@@ -285,13 +334,24 @@ static int voice(Chan *c)
         case W_TRI: { int t = (int)(ph >> 24); v = (t < 128 ? t * 2 - 128 : (255 - t) * 2 - 128); break; }
         default: v = sine64[ph >> 26]; break;
         }
-        c->phase += c->inc;
-        /* a short attack, and a release over the end of the note */
-        env = 256;
-        if (c->n < 48) env = c->n * 256 / 48;
         {
-            int32_t rel = c->len / 5;
-            if (rel > SR / 20) rel = SR / 20;
+            uint32_t inc = c->inc;
+            if (c->inc2) inc = (uint32_t)((int64_t)c->inc + ((int64_t)c->inc2 - (int64_t)c->inc) * c->n / c->len);
+            if (c->vib) {
+                /* about 5.5 Hz; depth 9 is close to a semitone */
+                c->lph += (uint32_t)(5.5 * 4294967296.0 / SR);
+                inc = (uint32_t)((int64_t)inc + (int64_t)inc * sine64[c->lph >> 26] * c->vib / (127 * 160));
+            }
+            c->phase += inc;
+        }
+        /* attack, and a release over the end of the note */
+        env = 256;
+        {
+            int32_t atk = c->atk ? c->atk : 48, rel;
+            if (atk > c->len / 2) atk = c->len / 2;
+            if (atk > 0 && c->n < atk) env = c->n * 256 / atk;
+            if (c->rel) { rel = c->rel; if (rel > c->len - atk) rel = c->len - atk; }
+            else { rel = c->len / 5; if (rel > SR / 20) rel = SR / 20; }
             if (rel > 0 && c->left < rel) env = env * c->left / rel;
         }
         return v * env / 256;
@@ -349,7 +409,9 @@ static int synth(const char *song)
 {
     Chan ch[MAXCH];
     char *texts[MAXCH] = {0};
-    int nch = 0, i, rc = 0, bpm0 = 120, active, realtime = hal_pcm_realtime();
+    int nch = 0, i, rc = 0, bpm0 = 120, active, realtime = hal_pcm_realtime() && !wav_out, speak = !g_conf.mute && !wav_out;
+    uint8_t obuf[256];
+    int on = 0;
     uint64_t next;
     uint32_t count = 0;
     const char *q = song, *t;
@@ -387,7 +449,7 @@ static int synth(const char *song)
         while ((r = next_event(&probe)) > 0) { }
         if (r < 0) { rc = -1; goto out; }
     }
-    if (!g_conf.mute) hal_pcm_start(SR);
+    if (speak) hal_pcm_start(SR);
     next = hal_micros();
     for (;;) {
         int mix = 0;
@@ -406,8 +468,9 @@ static int synth(const char *song)
         }
         if (!active) break;
         /* scale by the number of channels so a full song rarely clips,
-         * then the master volume */
-        mix = mix * 2 / (nch + 1) * g_conf.volume / 100;
+         * then the master volume (a rendered file gets full volume) */
+        mix = mix * 2 / (nch + 1);
+        if (!wav_out) mix = mix * g_conf.volume / 100;
         /* a soft knee above 96, so peaks round off instead of clipping */
         if (mix > 96) mix = 96 + (mix - 96) * 31 / (mix - 96 + 31);
         else if (mix < -96) mix = -96 - (-96 - mix) * 31 / (-96 - mix + 31);
@@ -417,11 +480,18 @@ static int synth(const char *song)
             next += 1000000u / SR;
             while (hal_micros() < next) { }
         }
-        if (!g_conf.mute) hal_pcm_write((uint8_t)(mix + 128));
+        if (wav_out) {
+            obuf[on++] = (uint8_t)(mix + 128);
+            if (on == (int)sizeof obuf) {
+                if (vfs_write(wav_out, obuf, on) != on) { rc = -1; snprintf(err, sizeof err, "write failed (disk full?)"); goto out; }
+                on = 0;
+            }
+        } else if (speak) hal_pcm_write((uint8_t)(mix + 128));
         if ((++count & 511) == 0 && con_poll_break()) { rc = 1; break; }
     }
+    if (wav_out && on && vfs_write(wav_out, obuf, on) != on) { rc = -1; snprintf(err, sizeof err, "write failed (disk full?)"); }
 out:
-    if (rc >= 0 && !g_conf.mute) hal_pcm_stop();
+    if (rc >= 0 && speak) hal_pcm_stop();
     for (i = 0; i < MAXCH; i++) free(texts[i]);
     return rc;
 }
@@ -518,3 +588,44 @@ out:
     vfs_close(f);
     return rc;
 }
+
+/* ------------------------------------------------------------------ */
+/* rendering to a .wav file                                            */
+/* ------------------------------------------------------------------ */
+
+static void put32(uint8_t *p, uint32_t v) { p[0] = (uint8_t)v; p[1] = (uint8_t)(v >> 8); p[2] = (uint8_t)(v >> 16); p[3] = (uint8_t)(v >> 24); }
+
+int play_to_wav(const char *s, const char *out_path, uint32_t *bytes)
+{
+    char full[VFS_PATH];
+    uint8_t h[44];
+    int32_t size;
+    int r;
+    err[0] = 0;
+    if (!vfs_resolve(out_path, full) || !(wav_out = vfs_open(full, "w"))) { snprintf(err, sizeof err, "cannot create %s", out_path); return -1; }
+    memset(h, 0, sizeof h);
+    vfs_write(wav_out, h, 44);
+    while (*s == ' ') s++;
+    if (*s == '@') {
+        char *song = load_song(s + 1);
+        if (!song) { if (!err[0]) snprintf(err, sizeof err, "out of memory"); r = -1; }
+        else { r = synth(song); free(song); }
+    } else r = synth(s);
+    size = vfs_tell(wav_out);
+    if (size < 44) size = 44;
+    memcpy(h, "RIFF", 4); put32(h + 4, (uint32_t)size - 8); memcpy(h + 8, "WAVEfmt ", 8);
+    put32(h + 16, 16); h[20] = 1; h[22] = 1;            /* PCM, mono */
+    put32(h + 24, SR); put32(h + 28, SR); h[32] = 1; h[34] = 8;
+    memcpy(h + 36, "data", 4); put32(h + 40, (uint32_t)size - 44);
+    vfs_seek(wav_out, 0, 0);
+    vfs_write(wav_out, h, 44);
+    vfs_close(wav_out);
+    wav_out = 0;
+    if (bytes) *bytes = (uint32_t)size;
+    return r;
+}
+
+/* for the tracker: a song file as one string, channels joined with '|',
+ * and repeats expanded per channel. Caller frees. */
+char *song_load_text(const char *path) { err[0] = 0; return load_song_k(path, 1); }
+char *song_expand(const char *s) { err[0] = 0; return expand(s); }

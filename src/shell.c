@@ -14,6 +14,8 @@
 #include "vm.h"
 #include "cc.h"
 #include "editor.h"
+#include "tracker.h"
+#include "xfer.h"
 #include "lineedit.h"
 #include "sound.h"
 #include "selftest.h"
@@ -515,7 +517,42 @@ static int c_play(int argc, char **argv)
 {
     char notes[256] = "";
     int i, r;
-    if (argc < 2) { con_puts("usage: play NOTES | play FILE.song\n  e.g. play T140 C4 E4 G4/2 R C5/2 | K/4 SN/4 K/4 SN/4\n"); return 1; }
+    const char *out = 0;
+    if (argc < 2) { con_puts("usage: play NOTES | play FILE.song  [-o OUT.wav]\n  e.g. play T140 C4 E4 G4/2 R C5/2 | K/4 SN/4 K/4 SN/4\n"); return 1; }
+    /* -o OUT.wav anywhere: render to a file instead of the speakers */
+    for (i = 1; i + 1 < argc; i++)
+        if (!strcmp(argv[i], "-o")) {
+            int j;
+            out = argv[i + 1];
+            for (j = i; j + 2 <= argc; j++) argv[j] = argv[j + 2];
+            argc -= 2;
+            break;
+        }
+    if (out) {
+        uint32_t bytes = 0;
+        char src[260];
+        if (!need_sd("play")) return 1;
+        if (argc < 2) { err("play", "nothing to render", 0); return 1; }
+        src[0] = 0;
+        if (argc == 2 && (strchr(argv[1], '.') || strchr(argv[1], '/'))) {
+            char full[VFS_PATH];
+            int isdir = 0;
+            if (vfs_resolve(argv[1], full) && vfs_stat(full, &isdir, 0) && !isdir) snprintf(src, sizeof src, "@%s", full);
+        }
+        if (!src[0])
+            for (i = 1; i < argc; i++) {
+                if (i > 1) strncat(src, " ", sizeof src - strlen(src) - 1);
+                strncat(src, argv[i], sizeof src - strlen(src) - 1);
+            }
+        con_printf("rendering to %s...\n", out);
+        con_flush();
+        r = play_to_wav(src, out, &bytes);
+        if (r < 0) { err("play", play_error(), 0); return 1; }
+        if (r == 1) { con_puts("stopped\n"); return 1; }
+        con_printf("%s: %lu bytes, %lu.%lu s\n", out, (unsigned long)bytes,
+                   (unsigned long)((bytes - 44) / 16000), (unsigned long)((bytes - 44) % 16000 / 1600));
+        return 0;
+    }
     for (i = 1; i < argc; i++) {
         if (i > 1) strncat(notes, " ", sizeof notes - strlen(notes) - 1);
         strncat(notes, argv[i], sizeof notes - strlen(notes) - 1);
@@ -548,6 +585,19 @@ static int c_wav(int argc, char **argv)
     if (r < 0) { err("wav", play_error(), 0); return 1; }
     if (r == 1) con_puts("stopped\n");
     return 0;
+}
+
+static int c_tracker(int argc, char **argv)
+{
+    if (!need_sd("tracker")) return 1;
+    return tracker_open(argc > 1 ? argv[1] : 0);
+}
+
+static int c_xfer(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    if (!need_sd("xfer")) return 1;
+    return xfer_serve();
 }
 
 static int c_gpio(int argc, char **argv)
@@ -1451,6 +1501,8 @@ static const Cmd cmds[] = {
     {"history", c_history, "history [-c]", "command history (!N or !! repeats)"},
     {"play", c_play, "play NOTES | play FILE.song", "play a tune: up to 4 channels split by |, drums K SN HH OH CP TH TL CY"},
     {"wav", c_wav, "wav FILE", "play a PCM .wav file"},
+    {"tracker", c_tracker, "tracker [FILE.song]", "step editor for songs: 4 channels, one row per 1/16"},
+    {"xfer", c_xfer, "xfer", "copy files to/from a PC over USB (tools/calcxfer.py)"},
     {"gpio", c_gpio, "gpio PIN [in|out|up|down|0|1]", "read or set a free GPIO pin"},
     {"selftest", c_selftest, "selftest [quick] [flash]", "check memory, SD, flash, compiler, sensors, screen, keys, sound"},
     {"alias", c_alias, "alias [NAME=CMD]", "list or define aliases (saved)"},

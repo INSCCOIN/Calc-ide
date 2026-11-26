@@ -9,7 +9,7 @@ B        = build-host
 CORE = src/console.c src/lineedit.c src/config.c src/vfs_common.c src/pf.c src/splash.c src/sound.c src/selftest.c \
        src/vm.c src/ccport.c
 POSIX = platform/posix/hal_posix.c platform/posix/vfs_posix.c
-APP   = src/shell.c src/editor.c src/main.c platform/posix/main_posix.c $(B)/embedded.c
+APP   = src/shell.c src/editor.c src/tracker.c src/xfer.c src/main.c platform/posix/main_posix.c $(B)/embedded.c
 EMBED = $(foreach f,$(wildcard examples/*.c),/calcide/examples/$(notdir $(f))=$(f)) \
         $(foreach f,$(wildcard songs/*.song),/calcide/songs/$(notdir $(f))=$(f)) \
         /calcide/cc/cc.c=cc/cc.c /calcide/cc/ops.h=cc/ops.h /calcide/cc/prelude.h=cc/prelude.h

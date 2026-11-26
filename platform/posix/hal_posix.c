@@ -15,6 +15,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <sys/select.h>
+#include <fcntl.h>
 
 static int batch;
 static int raw_on;
@@ -107,6 +108,51 @@ static int rd_byte(int wait_ms)
 }
 
 static int eof_seen;
+
+/* USB serial: CALCIDE_USB names a tty (e.g. a pty slave) to use as the port */
+static int usb_fd = -2;
+static int usb_open(void)
+{
+    if (usb_fd == -2) {
+        const char *p = getenv("CALCIDE_USB");
+        usb_fd = p ? open(p, O_RDWR | O_NOCTTY) : -1;
+        if (usb_fd >= 0) {
+            struct termios t;
+            if (tcgetattr(usb_fd, &t) == 0) { cfmakeraw(&t); tcsetattr(usb_fd, TCSANOW, &t); }
+        }
+    }
+    return usb_fd;
+}
+
+int hal_usb_getc(int timeout_ms)
+{
+    fd_set fs;
+    struct timeval tv;
+    unsigned char c;
+    int fd = usb_open();
+    if (fd < 0) { if (timeout_ms > 0) usleep((useconds_t)timeout_ms * 1000); return -1; }
+    FD_ZERO(&fs);
+    FD_SET(fd, &fs);
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+    if (select(fd + 1, &fs, 0, 0, &tv) <= 0) return -1;
+    if (read(fd, &c, 1) != 1) return -1;
+    return c;
+}
+
+void hal_usb_write(const void *buf, int n)
+{
+    const char *p = (const char *)buf;
+    int fd = usb_open();
+    while (fd >= 0 && n > 0) {
+        ssize_t w = write(fd, p, (size_t)n);
+        if (w <= 0) break;
+        p += w;
+        n -= (int)w;
+    }
+}
+
+int hal_kbd_key(void) { return batch ? -1 : hal_key(); }
 
 int hal_key(void)
 {

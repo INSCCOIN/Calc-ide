@@ -246,6 +246,7 @@ char cc_prelude[] =
 "int uart_read(int port, void *buf, int max) __sys(200);\n"
 "int uart_available(int port) __sys(201);\n"
 "int uart_puts(int port, char *s) __sys(202);\n"
+"int play_to_wav(char *notes, char *path) __sys(203);\n"
 ;
 
 /* The names a PicoCalc program may want: #include <picocalc.h> (or <conio.h>). */

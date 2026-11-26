@@ -54,6 +54,10 @@ void hal_pixel(int x, int y, uint16_t rgb565);
 void hal_fill(int x, int y, int w, int h, uint16_t rgb565);
 void hal_line(int x0, int y0, int x1, int y1, uint16_t rgb565);
 void hal_serial_write(const char *s, int n);  /* USB serial mirror */
+/* raw USB serial for file transfer (the mirror is off meanwhile) */
+int  hal_usb_getc(int timeout_ms);      /* a byte, or -1 on timeout */
+void hal_usb_write(const void *buf, int n);
+int  hal_kbd_key(void);                 /* the keyboard only, -1 if none */
 
 void hal_tone(int hz, int ms);          /* ms <= 0: start and return */
 void hal_tone_off(void);

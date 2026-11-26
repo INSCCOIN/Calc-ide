@@ -116,6 +116,24 @@ void hal_serial_write(const char *s, int n)
     if (n > 0) stdio_put_string(s, n, false, false);
 }
 
+int hal_usb_getc(int timeout_ms)
+{
+    int c = getchar_timeout_us(timeout_ms > 0 ? (uint32_t)timeout_ms * 1000u : 0);
+    return c < 0 ? -1 : (c & 0xFF);
+}
+
+void hal_usb_write(const void *buf, int n)
+{
+    const char *p = (const char *)buf;
+    while (n > 0) {
+        int k = n > 256 ? 256 : n;
+        stdio_put_string(p, k, false, false);
+        stdio_flush();
+        p += k;
+        n -= k;
+    }
+}
+
 /* VT100 decoding of serial input */
 static int ser_peek(uint32_t wait_us)
 {
@@ -177,6 +195,16 @@ int hal_key(void)
     if (k >= 0) return k;
     /* the I2C controller is slow; do not hammer it */
     now = hal_micros();
+    if ((uint32_t)now - last_kbd_us < 4000) return -1;
+    last_kbd_us = (uint32_t)now;
+    k = kbd_poll();
+    return k ? k : -1;
+}
+
+int hal_kbd_key(void)
+{
+    uint64_t now = hal_micros();
+    int k;
     if ((uint32_t)now - last_kbd_us < 4000) return -1;
     last_kbd_us = (uint32_t)now;
     k = kbd_poll();

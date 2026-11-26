@@ -1,0 +1,14 @@
+install
+play /calcide/songs/shapes.song -o /shapes.wav
+play -o /x.wav T200 C4~C5/8*3 TP-2 VB4 AT10 RL50 D4
+play C4/4*0
+tracker /new.song
+c[Bd[Be[C[Hk[B[Bscat /new.song
+tracker /calcide/songs/sunrise.song
+
+----
+/shapes.wav: 268844 bytes, 16.8 s
+/x.wav: 12044 bytes, 0.7 s
+play: bad note
+1: IPLS V7 C4/8 D4/8 E4/2.
+2: ITRI V7 K/8. SN/16*13

@@ -5,6 +5,9 @@ CalcIDE has a small 4-channel synthesizer. You can use it three ways:
 - **From the shell:** `play C4 E4 G4` plays notes straight away.
 - **From a song file:** `play mysong.song` plays a text file, one line per channel.
 - **From C:** `play("C4 E4 G4")` and `play("@/path/mysong.song")` work inside your programs.
+- **With the tracker:** `tracker mysong.song` is a grid editor where you place notes on a sixteenth-note grid instead of typing lengths ([see below](#the-tracker)).
+
+Any of these can also be saved as a `.wav` file: `play mysong.song -o mysong.wav`.
 
 All three use the same note language, so anything you try at the prompt can go into a song file or a C string unchanged.
 
@@ -14,6 +17,9 @@ All three use the same note language, so anything you try at the prompt can go i
 - [The note language](#the-note-language)
 - [Demo 1: writing a song file, step by step](#demo-1-writing-a-song-file-step-by-step)
 - [Demo 2: play() from C](#demo-2-play-from-c)
+- [Sound shaping](#sound-shaping)
+- [The tracker](#the-tracker)
+- [Saving to WAV and copying to a PC](#saving-to-wav-and-copying-to-a-pc)
 - [Keeping channels in step](#keeping-channels-in-step)
 - [Tips for sounding good](#tips-for-sounding-good)
 - [Troubleshooting](#troubleshooting)
@@ -51,6 +57,7 @@ The last one plays a melody, a bass line and a drum beat at once. The `|` separa
 |---|---|---|
 | `demo.song` | every instrument, then every drum | short |
 | `sunrise.song` | the tutorial song built below | 0:36 |
+| `shapes.song` | each sound-shaping effect in turn | 0:17 |
 | `beat.song` | drums only: rock, funk, claps, a tom fill | short |
 | `ode.song` | Ode to Joy: melody, bass and drums | short |
 | `furelise.song` | Für Elise for two triangle-wave "hands" | short |
@@ -93,6 +100,7 @@ Add a length after a `/`:
 | `C4/16` | sixteenth | ¼ |
 | `C4/32` | thirty-second | ⅛ |
 | `C4/4.` | dotted quarter (a dot adds half) | 1½ |
+| `C4/16*3` | a length times N (here three sixteenths) | ¾ |
 
 A note with no length uses the default (`L`, which starts at 4, a quarter note). Rests take lengths too: `R/2`.
 
@@ -418,6 +426,100 @@ What to notice:
 
 ---
 
+## Sound shaping
+
+Five more tokens change *how* a note sounds. Each applies to the following notes on its channel, like `V` and `I`.
+
+| Token | Effect | Example |
+|---|---|---|
+| `AT0`–`AT5000` | **attack:** fade in over N ms. Use slow attacks for pads and swells | `ISIN AT300 C4/1` |
+| `RL0`–`RL5000` | **release:** fade out over the last N ms of the note | `RL400 C5/2` |
+| `VB0`–`VB9` | **vibrato:** a ~5.5 Hz wobble; `VB9` is nearly a semitone | `ISAW VB5 E5/1` |
+| `C4~G4` | **slide** from the first pitch to the second over the note | `C4~C5/8*3` |
+| `TP+5`, `TP-12`, `TP0` | **transpose** every following note (not drums) by semitones | `TP+7 C5 E5 G5` |
+
+`AT0 RL0` puts the envelope back to the default, a short click-free attack and release.
+
+```
+/> play T100 ISAW C5 E5 G5/2 | ISIN AT300 RL300 C4/1
+/> play T100 ISAW VB6 C5 E5 G5/2
+/> play T120 C4~C5/4 C5~G4/4 G4~C6/2
+/> play T140 [C5/8 E5/8 G5/8 E5/8]x2 TP+5 [C5/8 E5/8 G5/8 E5/8]x2 TP+7 [C5/8 E5/8 G5/8 E5/8]x2
+```
+
+The last line plays the same riff in three keys. Transpose saves rewriting a section: put the riff in a repeat, then `TP+5 [riff]x2 TP0`.
+
+`songs/shapes.song` plays each effect in turn, then a key change of the whole band:
+
+```
+/> play /calcide/songs/shapes.song
+```
+
+---
+
+## The tracker
+
+`tracker` is a grid editor for songs. Instead of writing `C4/8`, you put notes on rows, and the space after a note is its length.
+
+```
+/> tracker /groove.song
+```
+
+```
+ TRACKER groove.song*  T120  O4  +1  row 5
+    1 PLS7 2 TRI7 3 SQ7  4 SQ7
+  1  C4     K      .      .
+  2                              <- empty: C4 keeps sounding
+  3         HH
+  4
+  5  E4     SN     .      .
+  ...
+```
+
+- **One row = one sixteenth.** 4 rows = a beat, 16 rows = a bar. Yellow row numbers mark each bar.
+- **Notes:** type `a`–`g` (at the octave `O` shown at the top). `#` sharpens, and `+`/`-` change octave. Each note is previewed as you type it.
+- **Drums:** `k` kick, `s` snare, `h` hat, `o` open hat, `p` clap, `t`/`l` toms, `y` crash.
+- **Length:** an empty cell holds the note above it; `r` puts a note off (`---`) to stop it.
+- **Step:** after each note the cursor moves down by the step shown as `+1`. Press `n` for 2, 4 or 8, which is handy for typing quarter notes or a kick on every beat.
+- **The channel header** (`1 PLS7`) is the instrument and volume. Press `i` to change the instrument and `[` `]` for volume; `{` `}` change the tempo.
+- **Ctrl+D** copies the current bar into the next one. It's the quickest way to build a song: write one bar, copy it, change a few notes.
+- **Enter** plays from the current bar, **F5** plays everything, and **break** stops.
+- **Ctrl+S** saves an ordinary `.song` file (one line per bar per channel), so you can open it in `edit` and add effects by hand. **Ctrl+W** saves and renders `groove.wav` too.
+
+The tracker opens any song whose notes fit the sixteenth-note grid, including all the bundled ones. `tracker /calcide/songs/sunrise.song` shows the tutorial song as a grid. Slides, effects and tempo changes aren't kept in the grid; you're warned when a song has them.
+
+A 4-bar beat to start with, keystroke by keystroke:
+
+1. `tracker /mybeat.song`, then move to channel 4 with Tab Tab Tab.
+2. Press `n` twice so the step is `+4` (one beat), then `k` `s` `k` `s` for kick, snare, kick, snare: one bar.
+3. Press Home to go back to row 1, `n` until the step is `+2`, and Tab to wrap round to channel 1. Type a riff: `c c e g c e g e` (eight eighth notes).
+4. Ctrl+D three times copies the bar to bars 2, 3 and 4. Press F5 to listen and Ctrl+S to save.
+
+---
+
+## Saving to WAV and copying to a PC
+
+Add `-o FILE.wav` to any `play` command to render it to the SD card instead of the speakers. It renders much faster than real time:
+
+```
+/> play /calcide/songs/lavalamp.song -o /lavalamp.wav
+rendering to /lavalamp.wav...
+/lavalamp.wav: 1280044 bytes, 80.0 s
+/> play -o /laser.wav T600 ISQ C7~C4/4
+```
+
+From C, `play_to_wav("@/mysong.song", "/mysong.wav")` does the same; it returns 0, or -1 on an error.
+
+The files are 8-bit mono, 16 kHz, so every computer and phone can play them. To get one off the PicoCalc without taking the SD card out, use USB transfer. Type `xfer` on the calculator, then on the PC:
+
+```bash
+python3 tools/calcxfer.py /dev/ttyACM0 get /lavalamp.wav
+```
+
+It works the other way too: `put mysong.song /calcide/songs/` sends a song you wrote on the PC. See [commands.md](commands.md#usb-file-transfer) for all of its commands.
+
+---
+
 ## Keeping channels in step
 
 Channels run independently. If one is shorter, it stops early and the others carry on. If a channel is longer in the *middle*, everything after it is out of time. So **count beats per bar** on every channel.
@@ -477,16 +579,21 @@ NOTES    C D E F G A B   + # or b   + octave 0-8      C#4 Eb5 G3
 REST     R
 LENGTH   /1 /2 /4 /8 /16 /32   dotted: /4.            C4/8  R/2  E5/4.
 TEMPO    T20..T600   (first T sets every channel)     T120
+TIMES    /16*3  R/1*4   (a length times N)
 DEFAULTS L1..L32 length   O0..O8 octave               L8 O5
 VOLUME   V0..V9                                       V6
 VOICES   ISQ square  IPLS pulse  ITRI triangle  ISAW saw  ISIN sine
 DRUMS    K kick  SN snare  HH hat  OH open hat  CP clap
          TH high tom  TL low tom  CY crash
+SHAPE    AT ms attack  RL ms release  VB0-9 vibrato
+         C4~G4 slide   TP+n / TP-n transpose (TP0 = off)
 REPEAT   [ ... ]x4   (nests; [ ] alone = twice)
 CHANNELS a | b | c | d   (up to 4)
 FILES    1: ... 4: lines, joined per channel; '# ' comments
-SHELL    play NOTES...     play FILE.song     wav FILE.wav
-C        play("NOTES")     play("@/path.song")     play_wav("x.wav")
+SHELL    play NOTES...   play FILE.song   play ... -o OUT.wav
+         wav FILE.wav    tracker FILE.song   xfer (USB to a PC)
+C        play("NOTES")   play("@/path.song")   play_wav("x.wav")
+         play_to_wav("@/path.song", "/out.wav")
 ```
 
 See also [commands.md](commands.md#the-synthesizer) for the shell reference and [compiler.md](compiler.md) for the C library.

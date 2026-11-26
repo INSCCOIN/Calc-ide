@@ -1,4 +1,4 @@
-# CalcIDE 0.33
+# CalcIDE 0.34
 
 **A self-hosting C IDE for the ClockworkPi PicoCalc.** It boots into a DOS-style command line. From there you write, edit, compile and run C entirely on the PicoCalc, with no PC involved. Source, compiler and programs all live on the SD card.
 
@@ -23,6 +23,13 @@ Everything else is new: the Tiny-C compiler, the bytecode VM, the shell, the edi
 
 ![64 columns](docs/editor64.png) ![A program](docs/mandel.png)
 
+## New in 0.34: tracker, sound shaping, WAV export, USB transfer
+
+- **`tracker FILE.song`:** a step editor for songs. Four channel columns, one row per sixteenth note. Type `a`–`g` for notes and `k s h o p t l y` for drums; an empty cell holds the note above it. Enter plays from the current bar, Ctrl+S saves an ordinary `.song` file, and Ctrl+W also renders a `.wav`. It opens any `.song` that fits the 1/16 grid, including the bundled ones. F1 lists every key.
+- **Sound shaping:** `AT120` attack and `RL400` release in ms, `VB0`–`VB9` vibrato, `C4~G4/2` pitch slides, `TP+5` / `TP-2` transpose, and `C4/16*3` for any multiple of a length. `songs/shapes.song` demonstrates each one.
+- **Save to WAV:** `play FILE.song -o out.wav` (or any notes) renders to the SD card instead of the speakers: 8-bit mono, 16 kHz. From C, use `play_to_wav(notes, path)`.
+- **USB file transfer:** type `xfer`, then on the PC run `python3 tools/calcxfer.py PORT put hello.c` (also `get`, `ls`, `mkdir`, `rm`, `bye`). Every file is CRC-checked, and you don't need to take the SD card out.
+
 ## New in 0.33: a little synthesizer
 
 `play` is now a 4-channel synthesizer mixed in software at 16 kHz.
@@ -39,12 +46,13 @@ play T128 IPLS L8 [E5 G5 A5 G5]x2 | ITRI V9 A2/2 F2/2 | [K HH SN HH]x2
 
 **[SONGS.md](SONGS.md) is the full guide to playing and writing songs**, with a step-by-step song-writing demo and a C demo (`jukebox.c`).
 
-`install` puts twelve songs in `/calcide/songs/`:
+`install` puts thirteen songs in `/calcide/songs/`:
 
 | Song | What it tests |
 |---|---|
 | `demo.song` | every instrument, then every drum (start here) |
 | `sunrise.song` | the tutorial song built step by step in SONGS.md (0:36) |
+| `shapes.song` | the 0.34 effects: envelopes, vibrato, slides and transpose |
 | `beat.song` | drums only: rock, funk, claps, a tom fill |
 | `ode.song` | Ode to Joy: melody, bass and drums |
 | `furelise.song` | Für Elise: two triangle-wave "hands" |
@@ -112,11 +120,11 @@ Everything is in `dist/`:
 
 | File | For |
 |---|---|
-| `calcide-0.33-rp2350.uf2` | PicoCalc with a **Raspberry Pi Pico 2 / Pico 2 W** (RP2350), stand-alone |
-| `calcide-0.33-rp2040.uf2` | PicoCalc with a **Raspberry Pi Pico / Pico W** (RP2040), stand-alone |
-| `calcide-0.33-rp2350-sdboot.bin` | RP2350 app for the PicoCalc **SD boot launcher** (`pico_multi_booter`) |
-| `calcide-0.33-rp2040-sdboot.bin` | RP2040 app for the SD boot launcher |
-| `calcide-0.33.zip` | Everything above plus the full source and documentation |
+| `calcide-0.34-rp2350.uf2` | PicoCalc with a **Raspberry Pi Pico 2 / Pico 2 W** (RP2350), stand-alone |
+| `calcide-0.34-rp2040.uf2` | PicoCalc with a **Raspberry Pi Pico / Pico W** (RP2040), stand-alone |
+| `calcide-0.34-rp2350-sdboot.bin` | RP2350 app for the PicoCalc **SD boot launcher** (`pico_multi_booter`) |
+| `calcide-0.34-rp2040-sdboot.bin` | RP2040 app for the SD boot launcher |
+| `calcide-0.34.zip` | Everything above plus the full source and documentation |
 
 **Stand-alone:** hold BOOTSEL on the Pico, plug in USB, and copy the `.uf2` onto the drive that appears. From a running CalcIDE, the `bootsel` command does the same without opening the case.
 

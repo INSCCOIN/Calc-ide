@@ -177,6 +177,7 @@ Everything below is always declared, so `#include` lines are optional. The full 
 | `int rgb(int r, int g, int b)` | make an RGB565 colour |
 | `int play(char *notes)` | play a tune on the 4-channel synthesizer: `play("T140 ISQ L8 C4 E4 G4 C5/2 \| K SN K SN")`, or a song file with `play("@/calcide/songs/ode.song")` (see the synthesizer section in commands.md, and [SONGS.md](SONGS.md) for a tutorial and the `jukebox.c` demo); 0, or -1 for a bad song |
 | `int play_wav(char *path)` | play a PCM `.wav` (8/16-bit, mono/stereo, up to 48 kHz); 0 or -1 |
+| `int play_to_wav(char *notes, char *path)` | render a tune, or `"@/file.song"`, to a `.wav` file instead of the speakers (8-bit mono, 16 kHz); 0 or -1 |
 | `int gpio_mode(int pin, int mode)` | `GPIO_IN`, `GPIO_OUT`, `GPIO_PULLUP`, `GPIO_PULLDOWN`; -1 for a pin the PicoCalc uses |
 | `int gpio_write(int pin, int value)`, `int gpio_read(int pin)` | free pins: 0–5, 8, 9, 20–22, 28 |
 | `int uart_open(int port, int baud)`, `void uart_close(int port)` | port 0: GP0 TX, GP1 RX; port 1: GP4 TX, GP5 RX; closed automatically when the program ends |

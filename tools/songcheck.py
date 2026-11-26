@@ -11,12 +11,12 @@ def beats(text):
     deflen, total = 4, 0.0
     for tok in expand(text).replace(",", " ").split():
         t = tok.upper()
-        if t.startswith("I") or re.fullmatch(r"[TOV]\d+", t): continue
+        if t.startswith("I") or re.fullmatch(r"[TOV]\d+|AT\d+|RL\d+|VB\d|TP[+-]?\d+", t): continue
         if re.fullmatch(r"L\d+", t): deflen = int(t[1:]); continue
-        m = re.fullmatch(r"(SN|HH|OH|CP|TH|TL|CY|K|R|[A-G](?:#|B)?\d?)(?:/(\d+))?(\.)?", t)
+        m = re.fullmatch(r"(SN|HH|OH|CP|TH|TL|CY|K|R|[A-G](?:#|B)?\d?(?:~[A-G](?:#|B)?\d?)?)(?:/(\d+))?(?:\*(\d+))?(\.)?", t)
         if not m: raise SystemExit("bad token %r" % tok)
         n = int(m.group(2) or deflen)
-        d = 4.0 / n * (1.5 if m.group(3) else 1)
+        d = 4.0 / n * int(m.group(3) or 1) * (1.5 if m.group(4) else 1)
         total += d
     return total
 bad = 0

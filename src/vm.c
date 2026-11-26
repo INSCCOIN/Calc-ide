@@ -750,6 +750,7 @@ enum {
     SYS_SETJMP = 180, SYS_LONGJMP, SYS_VPRINTF, SYS_VSPRINTF, SYS_VSNPRINTF, SYS_VFPRINTF,
     SYS_PLAY = 190, SYS_PLAYWAV, SYS_GPIOMODE, SYS_GPIOWRITE, SYS_GPIOREAD, SYS_UARTOPEN,
     SYS_UARTCLOSE, SYS_UARTPUTC, SYS_UARTGETC, SYS_UARTWRITE, SYS_UARTREAD, SYS_UARTAVAIL, SYS_UARTPUTS,
+    SYS_PLAYTOWAV,
     SYS_COUNT
 };
 
@@ -1198,6 +1199,14 @@ static int64_t vm_sys(VM *vm, int id, int32_t *a, int n)
     case SYS_TEMPERATURE: return (uint32_t)f2i(hal_temp_c());
     case SYS_PLAY: case SYS_PLAYWAV: {
         int r = id == SYS_PLAY ? play_notes(vstr(vm, a[0])) : play_wav(vstr(vm, a[0]));
+        if (r == 1) vm_fail(vm, "break");
+        return r;
+    }
+    case SYS_PLAYTOWAV: {
+        char path[VFS_PATH];
+        int r;
+        snprintf(path, sizeof path, "%s", vstr(vm, a[1]));
+        r = play_to_wav(vstr(vm, a[0]), path, 0);
         if (r == 1) vm_fail(vm, "break");
         return r;
     }

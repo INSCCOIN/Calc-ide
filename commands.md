@@ -197,7 +197,10 @@ page file: 768 KB (192 pages of 4 KB)
 |---|---|
 | `play NOTES...` | Play a tune. Notes are `C D E F G A B` with `#` or `b` and an octave (`C#4`, `Eb5`; the default octave is 4). `/N` sets the length (`/1 /2 /4 /8 /16 /32`, default `/4`), `.` makes a note dotted, `R` is a rest, `T140` sets the tempo, `L8` the default length and `O5` the default octave. The break key stops it. See the synthesizer reference below for channels, instruments and drums. |
 | `play FILE.song` | Play a song file (e.g. `play /calcide/songs/chiptune.song`). |
+| `play ... -o OUT.wav` | Render notes or a `.song` to a WAV file (8-bit mono, 16 kHz) instead of the speakers: `play /calcide/songs/caravan.song -o /caravan.wav`. |
 | `wav FILE.wav` | Play an 8- or 16-bit PCM WAV file, mono or stereo, up to 48 kHz. |
+| `tracker [FILE.song]` | A step editor for songs (see *The tracker* below). With no file, it edits `untitled.song`. |
+| `xfer` | Copy files to and from a PC over USB until a key is pressed (see *USB file transfer* below). |
 | `gpio` | List the GPIO pins programs may use: 0–5, 8, 9, 20–22 and 28. |
 | `gpio PIN` | Read a pin. |
 | `gpio PIN in\|out\|up\|down` | Set a pin's mode (`up`/`down` are inputs with a pull resistor). |
@@ -219,6 +222,11 @@ Up to four channels play at once, separated by `|`, and they are mixed at 16 kHz
 | `T120` | tempo in quarter notes per minute; the first `T` in the string sets the start for every channel |
 | `L8`, `O5` | default length, default octave |
 | `[ ... ]x3` | repeat (nests; `[ ]` alone repeats twice) |
+| `AT120` `RL400` | attack and release time in ms (`AT0 RL0` = the default short, click-free envelope) |
+| `VB0`..`VB9` | vibrato depth, about 5.5 Hz (`VB0` = off) |
+| `C4~G4/2` | slide from C4 to G4 over the note's length |
+| `TP+5` `TP-12` `TP0` | transpose the channel's following notes (not drums) by semitones |
+| `C4/16*3` | a length times N (three sixteenths); also `R/1*4` |
 | `@/path.song` | (from C) play a song file |
 
 A `.song` file is plain text. `#` starts a comment, but only at the start of a line or after a space, since `C#` is a note. A line `1: ...` to `4: ...` adds to that channel, and a line without a number goes to channel 1. Lines for the same channel run on, one after another:
@@ -244,6 +252,44 @@ memory     PASS  64 KB tested, 412 KB free, largest 398 KB
 sd card    PASS  FAT32 32 KB verified, write 480 KB/s, read 1100 KB/s
 ...
 ```
+
+### The tracker
+
+`tracker FILE.song` edits a song as a grid: four channel columns, with one row per sixteenth note (16 rows per bar). A cell is a note, a drum, `---` (note off), or empty. An empty cell holds whatever is above it, so a C4 followed by three empty rows is a quarter note. Saving writes a normal `.song` file. The song ends at the end of the last bar that has something in it.
+
+| Key | Action |
+|---|---|
+| `a`–`g` | a note at the octave shown in the title bar |
+| `#` | raise the note a semitone |
+| `+` / `-` | octave up / down (the cell, and the default for new notes) |
+| `k s h o p t l y` | kick, snare, hi-hat, open hat, clap, high tom, low tom, crash |
+| `r` | note off (a rest) |
+| Space, Del, Backspace | clear the cell (Space also moves down) |
+| `n` | step: how far the cursor moves after a note (1, 2, 4, 8 rows) |
+| `i`, `[` `]` | the channel's instrument; its volume down / up |
+| `{` `}` | tempo down / up by 5 |
+| Arrows, Tab, PgUp/PgDn, Home/End | move (PgUp/PgDn move a bar) |
+| Ins / Ctrl+K | insert / delete a row in this channel |
+| Ctrl+D | copy this bar to the next bar |
+| Enter | play from the start of this bar; F5 or Ctrl+R plays it all; break stops |
+| Ctrl+S | save; Ctrl+W saves and also renders `FILE.wav` |
+| F1 | help; Esc or Ctrl+Q quits (asks to save) |
+
+Notes preview as you type them. Any `.song` opens if its notes fit the sixteenth-note grid (no `/32`). Slides, effects and tempo changes are dropped, and you're told when that happens.
+
+### USB file transfer
+
+`xfer` turns the USB serial port into a file server. Plug the PicoCalc into a PC and type `xfer` on it. Then, on the PC (Python 3; on Windows install `pyserial` first):
+
+```
+python3 tools/calcxfer.py /dev/ttyACM0 ls /
+python3 tools/calcxfer.py /dev/ttyACM0 put game.c /code/
+python3 tools/calcxfer.py /dev/ttyACM0 get /caravan.wav
+python3 tools/calcxfer.py /dev/ttyACM0 mkdir /music put a.song /music/ put b.song /music/
+python3 tools/calcxfer.py /dev/ttyACM0 bye
+```
+
+The port is `/dev/ttyACM0` on Linux, `/dev/cu.usbmodem…` on macOS and `COM3` (or similar) on Windows. Every file is checked with a CRC-32. A destination ending in `/` keeps the file's name. Pressing any key on the PicoCalc, or `bye`, ends transfer mode. While it is on, the screen shows each file sent or received.
 
 ## Shell conveniences
 

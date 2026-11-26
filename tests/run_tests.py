@@ -97,6 +97,10 @@ def main():
             report(r.returncode == 0 and "fatfs ok" in out and fsck.returncode == 0,
                    "fatfs FAT%s (and fsck clean)" % bits, out + fsck.stdout.decode())
 
+    # USB file transfer, over a pty
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "xfer_test.py")], capture_output=True, timeout=120)
+    report(r.returncode == 0, "xfer: USB file transfer round trip", (r.stdout + r.stderr).decode())
+
     # every song's channels are the same length
     r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "songcheck.py")] +
                        sorted(glob.glob(os.path.join(ROOT, "songs", "*.song"))), capture_output=True)
