@@ -71,8 +71,10 @@ int le_readline(char *buf, int max, const char *prompt, LeHistory *h)
     View v;
     int len = 0, pos = 0, k, hidx;
     char saved[256];
+    int mir;
     if (max < 2) return -1;
     if (prompt && prompt[0]) con_puts(prompt);
+    mir = con_mirror(0);          /* redraws are not echoed to serial */
     v.sx = con_x();
     v.sy = con_y();
     v.shown = 0;
@@ -85,11 +87,15 @@ int le_readline(char *buf, int max, const char *prompt, LeHistory *h)
             buf[len] = 0;
             pos = len;
             redraw(&v, buf, len, pos);
+            /* the serial side only sees the line once it is complete */
             con_putc('\n');
+            con_mirror(mir);
+            if (mir) { hal_serial_write(buf, len); hal_serial_write("\r\n", 2); }
             con_flush();
             return len;
         }
         if (k == KEY_CTRL('c') || k == KEY_BREAK || (k == KEY_ESC && len == 0)) {
+            con_mirror(mir);
             con_puts("^C\n");
             buf[0] = 0;
             return -1;

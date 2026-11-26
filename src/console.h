@@ -43,7 +43,7 @@ void con_place_cursor(int x, int y);  /* cursor without moving the stream */
 
 void con_flush(void);
 void con_invalidate(void);
-void con_mirror(int on);            /* serial mirroring of the stream */
+int  con_mirror(int on);            /* serial mirroring; returns the old state */
 
 /* keyboard */
 int  con_getkey(void);              /* blocking, flushes first */

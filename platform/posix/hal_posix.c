@@ -101,12 +101,12 @@ static int eof_seen;
 int hal_key(void)
 {
     int c, d, e;
-    if (eof_seen) return -1;
+    if (eof_seen) return KEY_CTRL('c');
     c = rd_byte(0);
     if (c == -2) {
         /* batch input finished: behave like a user pressing Ctrl+C forever */
         eof_seen = 1;
-        return -1;
+        return KEY_CTRL('c');
     }
     if (c < 0) return -1;
     if (c == '\r') return '\n';
@@ -161,6 +161,17 @@ int hal_key(void)
 }
 
 int hal_modifiers(void) { return 0; }
+
+int hal_poll_break(void (*queue)(int key))
+{
+    int k;
+    if (batch) return eof_seen ? 0 : 0;   /* scripted input is only read on demand */
+    while ((k = hal_key()) >= 0) {
+        if (k == KEY_BREAK || k == KEY_CTRL('c')) return 1;
+        queue(k);
+    }
+    return 0;
+}
 
 int hal_eof(void) { return eof_seen; }
 

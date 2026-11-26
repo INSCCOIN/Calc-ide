@@ -42,7 +42,7 @@ static int esc_n;
 static int esc_priv;
 
 /* keyboard FIFO */
-static int kq[32];
+static int kq[128];
 static int kq_head, kq_tail;
 
 int con_scrolls;                 /* incremented on every scroll (line editor) */
@@ -102,7 +102,7 @@ int con_y(void) { return cy; }
 int con_fg(void) { return attr & 15; }
 int con_bg(void) { return (attr >> 4) & 15; }
 int con_cursor_on(void) { return cur_on; }
-void con_mirror(int on) { mirror = on; }
+int con_mirror(int on) { int old = mirror; mirror = on; return old; }
 
 static void scroll_up(void)
 {
@@ -212,7 +212,18 @@ static void put_raw(int c)
     cx++;
 }
 
+static void put_char(int c);
+
 void con_putc(int c)
+{
+    if (mirror) {
+        if (c == '\n') hal_serial_write("\r\n", 2);
+        else { char ch = (char)c; hal_serial_write(&ch, 1); }
+    }
+    put_char(c);
+}
+
+static void put_char(int c)
 {
     c &= 0xFF;
     if (esc_state == 1) {
@@ -262,7 +273,7 @@ void con_write(const char *s, int n)
         }
         if (n > start) hal_serial_write(s + start, n - start);
     }
-    for (i = 0; i < n; i++) con_putc((unsigned char)s[i]);
+    for (i = 0; i < n; i++) put_char((unsigned char)s[i]);
 }
 
 void con_puts(const char *s) { con_write(s, (int)strlen(s)); }
@@ -344,7 +355,7 @@ void con_flush(void)
 
 static void kq_push(int k)
 {
-    int n = (kq_tail + 1) % 32;
+    int n = (kq_tail + 1) % 128;
     if (n == kq_head) return;
     kq[kq_tail] = k;
     kq_tail = n;
@@ -357,7 +368,7 @@ static int kq_pop(void)
     int k;
     if (kq_head == kq_tail) return -1;
     k = kq[kq_head];
-    kq_head = (kq_head + 1) % 32;
+    kq_head = (kq_head + 1) % 128;
     return k;
 }
 
@@ -388,12 +399,7 @@ int con_kbhit(void)
 
 int con_poll_break(void)
 {
-    int k;
-    while ((k = hal_key()) >= 0) {
-        if (k == KEY_BREAK || k == KEY_CTRL('c')) return 1;
-        kq_push(k);
-    }
-    return 0;
+    return hal_poll_break(kq_push);
 }
 
 int con_getkey(void)

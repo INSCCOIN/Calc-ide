@@ -39,6 +39,8 @@ uint64_t hal_micros(void);
 void     hal_sleep_ms(int ms);
 
 int  hal_key(void);                     /* -1 if nothing is waiting */
+/* drain the keyboard: 1 if Ctrl+C / BREAK was pressed; other keys go to queue() */
+int  hal_poll_break(void (*queue)(int key));
 int  hal_modifiers(void);
 
 /* draw one text row; cursor_col < 0 means no cursor on this row */

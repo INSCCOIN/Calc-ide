@@ -1,0 +1,45 @@
+version
+install
+cd /calcide/examples
+run hello.c
+run primes.c
+run structs.c
+run files.c
+cat demo.txt
+pf set greeting hello there
+pf view greeting
+run pfdemo.c
+run pfdemo.cbc
+pf set demo/sub/x 1
+pf tree
+alias ll=ls -l
+ll /calcide
+mkdir /tmpdir
+cp hello.c /tmpdir
+mv /tmpdir/hello.c /tmpdir/hi.c
+ls /tmpdir
+rm -r /tmpdir
+ls /tmpdir
+bogus
+width 64
+set tabsize 2
+----
+CalcIDE 0.1 - on-device C IDE for the PicoCalc
+Hello from CalcIDE on the PicoCalc!
+1229 primes below 10000
+total      4.90
+read 6 lines
+line 5: 5 squared is 25
+hello there
+This program has run 1 time(s).
+This program has run 2 time(s).
+|-- demo/
+|   |-- count (data, 4)
+|   |-- sub/
+|   |   |-- x (var, 1)
+|-- greeting (var, 11)
+<DIR>  examples/
+hi.c
+ls: /tmpdir: not found
+unknown command: bogus
+64 x 32
