@@ -20,7 +20,7 @@ cp build-pico2-sdboot/calcide.bin dist/calcide-$V-rp2350-sdboot.bin
 cp build-pico-sdboot/calcide.bin  dist/calcide-$V-rp2040-sdboot.bin
 rm -f dist/calcide-$V.zip
 tmp=$(mktemp -d)
-git archive --format=tar --prefix=calcide-$V/ HEAD | tar -x -C "$tmp"
+git archive --format=tar --prefix=calcide-$V/ HEAD -- . ':!dist' | tar -x -C "$tmp"
 mkdir -p "$tmp/calcide-$V/dist"
 cp dist/*.uf2 dist/*.bin "$tmp/calcide-$V/dist/"
 (cd "$tmp" && zip -qr calcide-$V.zip calcide-$V)
