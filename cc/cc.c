@@ -22,7 +22,7 @@
 #include "ops.h"
 #include "prelude.h"
 
-#define CC_VERSION "0.1"
+#define CC_VERSION "0.2"
 
 /* ------------------------------------------------------------------ */
 /* tokens                                                              */

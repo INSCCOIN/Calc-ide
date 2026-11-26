@@ -6,7 +6,7 @@ CFLAGS  += -Isrc -Icc
 LDLIBS  += -lm
 B        = build-host
 
-CORE = src/console.c src/lineedit.c src/config.c src/vfs_common.c src/pf.c \
+CORE = src/console.c src/lineedit.c src/config.c src/vfs_common.c src/pf.c src/splash.c \
        src/vm.c src/ccport.c
 POSIX = platform/posix/hal_posix.c platform/posix/vfs_posix.c
 APP   = src/shell.c src/editor.c src/main.c platform/posix/main_posix.c $(B)/embedded.c

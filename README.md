@@ -1,4 +1,4 @@
-# CalcIDE 0.1
+# CalcIDE 0.2
 
 **A self-hosting C IDE for the ClockworkPi PicoCalc.** It boots into a DOS-style command line. From there you write, edit, compile and run C entirely on the PicoCalc, with no PC involved. Source, compiler and programs all live on the SD card.
 
@@ -23,6 +23,17 @@ Everything else is new: the Tiny-C compiler, the bytecode VM, the shell, the edi
 
 ![64 columns](docs/editor64.png) ![A program](docs/mandel.png)
 
+## New in 0.2
+
+- **64-bit `double` and `long long`.** `float` stays 32-bit and fast; `double` is a true IEEE double, so `printf("%.15f")` means what it says.
+- **More C:** variadic functions of your own (`<stdarg.h>`, `vprintf` and friends), `setjmp`/`longjmp`, `#` stringizing in macros, designated initializers (`.x = 1`, `[3] = 5`) and compound literals (`(struct pt){1, 2}`).
+- **Better compile errors:** each error shows the line with a caret under the column, and up to 10 errors are reported per compile instead of just the first.
+- **A faster VM:** computed-goto dispatch, plus fused instructions for compare-and-branch, store-and-discard and global loads.
+- **Several files open in the editor** as tabs (F6/F7 to switch, Ctrl+W to close; `max_files` sets the limit), and **auto-closing** brackets and quotes.
+- **New settings:** `cpu_mhz_idle` and `cpu_mhz_run` (a slow clock at the prompt, a fast one while compiling and running), a boot screen (`splash`, `splash_ms`, `splash_image` for your own `.bmp`), `break_key`, `show_stats`, `auto_close` and `max_files`.
+
+![Boot screen](docs/splash.png)
+
 ## Contents
 
 - [What's in it](#whats-in-it)
@@ -44,13 +55,13 @@ The full command reference is in **[commands.md](commands.md)**. The C dialect, 
 ## What's in it
 
 - **A shell** with 48 commands, plus DOS and Linux synonyms (`dir`/`ls`, `del`/`rm`, `type`/`cat`, ...), for 64 command names in all. These include the system commands you asked for (`battery`, `shutdown`, `reset`, `width`, `cls`, `color`/`theme`, `font`, `cursor`, `beep`, `mute`, `df`, `tree`, `sd`, `mount`/`unmount`, `sync`, `mem`/`free`, `uptime`, `version`, `temp`, `clock`, `exit`, `bye`, `history`, `alias`, `help`) and Linux/DOS-style file commands (`ls`/`dir`, `cd`, `mkdir`, `rm`, `cp`, `mv`, `cat`, `more`, ...). The shell also has command history, tab completion and aliases.
-- **A full-screen editor** with line numbers, syntax colouring (keywords, types, strings, comments, numbers, preprocessor), auto-indent, Ctrl+F search, go-to-line, line cut/copy/paste, and a status line showing the file name, cursor position and free memory in KB. **F5** compiles and runs; a compile error jumps straight to the offending line.
-- **A C compiler** (Tiny-C dialect, closer to "most of C") that runs on the RP2350. It handles `int`, `char`, `short`, `unsigned`, `float`/`double`, structs, unions, enums, typedefs, pointers to pointers, function pointers, arrays (multi-dimensional too), `malloc`/`free`, `switch`, `goto`, `static`, and a real preprocessor with `#include`, `#define` (with parameters), `#if`/`#ifdef`/`#elif`. Comments can be `//`, `/* */` or `##`.
+- **A full-screen editor** with line numbers, syntax colouring (keywords, types, strings, comments, numbers, preprocessor), auto-indent, auto-closing brackets and quotes, Ctrl+F search, go-to-line, line cut/copy/paste, several files open as tabs, and a status line showing the file name, cursor position and free memory in KB. **F5** compiles and runs; a compile error jumps straight to the offending line, opening the right file if the error is in a header.
+- **A C compiler** (Tiny-C dialect, closer to "most of C") that runs on the RP2350. It handles `char`, `short`, `int`, `long`, 64-bit `long long`, `unsigned`, 32-bit `float` and 64-bit `double`, structs, unions, enums, typedefs, pointers to pointers, function pointers, arrays (multi-dimensional too), designated initializers, compound literals, variadic functions, `malloc`/`free`, `setjmp`/`longjmp`, `switch`, `goto`, `static`, and a real preprocessor with `#include`, `#define` (with parameters and `#` stringizing), `#if`/`#ifdef`/`#elif`. Comments can be `//`, `/* */` or `##`. Compile errors show the line with a caret, and up to 10 are reported at once.
 - **It is self-hosting.** The compiler is written in the dialect it accepts. Compiled by itself and run on the VM, it produces a byte-identical copy of itself. The test suite checks this on every run.
 - **A bytecode VM** with runtime checks. It catches null pointers, out-of-bounds memory access, stack overflow, division by zero, bad `free()`, and calls through null function pointers. Errors report the function and source line, and Ctrl+C breaks out of any program.
-- **124 built-in functions**: stdio (including files on the SD card), string, ctype, stdlib, math, and PicoCalc hardware (screen, colours, keyboard, sound, backlight, battery, CPU speed, temperature, pixels, and the page file).
+- **154 built-in functions**: stdio (including files on the SD card), string, ctype, stdlib, math, and PicoCalc hardware (screen, colours, keyboard, sound, backlight, battery, CPU speed, temperature, pixels, and the page file).
 - **A page file (`pf`)**: 768 KB of on-board flash for named objects. It stores text, data and even programs, which can run straight from flash. The design follows CalcOS's STORE.
-- **All settings live in `/CalcIDE.conf`** in the root of the SD card: colours (shell and editor syntax colours), width/font, cursor, sound, backlight, clock, memory sizes, prompt, autoexec and aliases.
+- **All settings live in `/CalcIDE.conf`** in the root of the SD card: colours (shell and editor syntax colours), width/font, cursor, sound, backlight, idle and run clock speeds, boot screen, break key, memory sizes, prompt, autoexec and aliases.
 
 ## Downloads and flashing
 
@@ -58,11 +69,11 @@ Everything is in `dist/`:
 
 | File | For |
 |---|---|
-| `calcide-0.1-rp2350.uf2` | PicoCalc with a **Raspberry Pi Pico 2 / Pico 2 W** (RP2350), stand-alone |
-| `calcide-0.1-rp2040.uf2` | PicoCalc with a **Raspberry Pi Pico / Pico W** (RP2040), stand-alone |
-| `calcide-0.1-rp2350-sdboot.bin` | RP2350 app for the PicoCalc **SD boot launcher** (`pico_multi_booter`) |
-| `calcide-0.1-rp2040-sdboot.bin` | RP2040 app for the SD boot launcher |
-| `calcide-0.1.zip` | Everything above plus the full source and documentation |
+| `calcide-0.2-rp2350.uf2` | PicoCalc with a **Raspberry Pi Pico 2 / Pico 2 W** (RP2350), stand-alone |
+| `calcide-0.2-rp2040.uf2` | PicoCalc with a **Raspberry Pi Pico / Pico W** (RP2040), stand-alone |
+| `calcide-0.2-rp2350-sdboot.bin` | RP2350 app for the PicoCalc **SD boot launcher** (`pico_multi_booter`) |
+| `calcide-0.2-rp2040-sdboot.bin` | RP2040 app for the SD boot launcher |
+| `calcide-0.2.zip` | Everything above plus the full source and documentation |
 
 **Stand-alone:** hold BOOTSEL on the Pico, plug in USB, and copy the `.uf2` onto the drive that appears. From a running CalcIDE, the `bootsel` command does the same without opening the case.
 
@@ -115,7 +126,7 @@ There are 16 colours with the CGA/DOS palette, and the console understands ANSI 
 
 ## The editor
 
-`edit FILE` opens the editor. If the file doesn't exist yet, it starts empty.
+`edit FILE` opens the editor. If the file doesn't exist yet, it starts empty. `edit a.c b.h c.c` opens each file in a tab of its own. With more than one file open, the top row becomes a tab strip (`1:a.c* 2:b.h`), and `*` marks unsaved changes.
 
 | Key | Action |
 |---|---|
@@ -123,14 +134,18 @@ There are 16 colours with the CGA/DOS palette, and the console understands ANSI 
 | Ctrl+T | jump to top / bottom |
 | Ctrl+G | go to line |
 | **Ctrl+F** | find (case-insensitive); **F3** or Ctrl+N finds the next |
-| Ctrl+S | save; Ctrl+O opens another file |
+| Ctrl+S | save |
+| Ctrl+O | open a file in a new tab (or switch to it if it's open) |
+| **F6 / F7** | previous / next tab |
+| Ctrl+W | close the tab (asks to save) |
 | Ctrl+X / Ctrl+C / Ctrl+V | cut / copy / paste line |
 | Ctrl+D | duplicate line; Ctrl+K deletes the line |
 | Tab | indent to the next tab stop (spaces) |
+| `(` `[` `{` `"` `'` | with `auto_close` on, the closing half is inserted too; typing the closer steps over it, Backspace in an empty pair deletes both, and Enter between `{}` opens an indented block |
 | **F9** / Ctrl+B | compile; on an error the cursor jumps to the line |
 | **F5** / Ctrl+R | save, compile and run |
 | F1 | help |
-| Esc / Ctrl+Q | quit (asks to save if modified) |
+| Esc / Ctrl+Q | quit the editor (asks to save each modified file) |
 
 Rows 1–30 hold text, row 0 shows key hints, and row 31 is the status line: file name (with `*` if modified), line, column and free memory in KB.
 
@@ -157,7 +172,16 @@ Rows 1–30 hold text, row 0 shows key hints, and row 31 is the status line: fil
 | `cursor`, `cursor_style` | 1, 0 | cursor on/off; 0 = underline, 1 = block |
 | `mute`, `volume`, `key_click` | 0, 100, 0 | sound |
 | `backlight`, `kbd_backlight` | 200, 64 | 0–255 |
-| `cpu_mhz` | 0 | 0 = default clock (150 MHz on RP2350); applied at boot |
+| `cpu_mhz` | 0 | base clock; 0 = the chip's default (150 MHz RP2350, 125 MHz RP2040) |
+| `cpu_mhz_idle` | 0 | clock at the prompt and in the editor (0 = `cpu_mhz`), e.g. 48 to save battery |
+| `cpu_mhz_run` | 0 | clock while compiling and running programs (0 = `cpu_mhz`), e.g. 200 |
+| `splash` | 1 | show the boot screen before the command line |
+| `splash_ms` | 3000 | how long the boot screen stays (any key skips it) |
+| `splash_image` | | a `.bmp` to show instead of the CalcIDE logo, e.g. `/boot.bmp` |
+| `break_key` | both | the key that stops a program: `both` (Ctrl+C or Brk), `ctrlc`, `brk` or `esc` |
+| `show_stats` | 0 | after every program: instructions, time, heap and stack used, exit code |
+| `auto_close` | 1 | editor: close brackets and quotes as you type |
+| `max_files` | 4 | editor: files open at once (1–8) |
 | `vm_mem_kb` | 0 | memory for programs; 0 = all free memory |
 | `vm_stack_kb` | 32 | program stack |
 | `history` | 32 | shell history lines |
@@ -168,6 +192,22 @@ Rows 1–30 hold text, row 0 shows key hints, and row 31 is the status line: fil
 | `lcd_bits`, `lcd_madctl`, `lcd_invert`, `bl_swap` | 16, 0x48, 1, 0 | panel quirks (see [Troubleshooting](#troubleshooting)) |
 
 Themes set the shell and editor colours in one go: `theme dos`, `classic`, `turbo`, `green`, `amber`, `paper`, `matrix` or `night`.
+
+### The boot screen
+
+With `splash = 1`, CalcIDE shows a boot screen for `splash_ms` (3 seconds by default) before the command line, with a progress bar counting down; any key skips it. Point `splash_image` at a `.bmp` on the SD card to show your own picture instead of the logo; the 3-second timer stays the same. BMPs can be 1, 4, 8, 16, 24 or 32 bits per pixel (uncompressed), in any size: they are centred on the 320×320 screen and cropped if larger. Holding Esc at power-on skips the boot screen. If the image cannot be read, the logo is shown instead.
+
+### CPU clocks
+
+`cpu_mhz_idle` and `cpu_mhz_run` let the RP2350 run slowly while you type and quickly while it works: the run clock is switched on for `cc`, `run`, F5/F9 in the editor and programs run by name, and the idle clock comes back when they finish. Both are 0 by default, meaning "use `cpu_mhz`", so nothing changes until you set them:
+
+```
+clock idle 48       (saves battery at the prompt and in the editor)
+clock run 200       (a mild overclock while compiling and running)
+clock               (shows the current clock and all three settings)
+```
+
+Speeds above the chip's rating raise the core voltage first. If a setting stops the machine from booting, hold Esc while switching on (safe mode), then `clock 0`.
 
 ## The page file
 
@@ -194,12 +234,12 @@ Replacing an object writes the new copy first and switches the directory last, s
 | | RP2350 | RP2040 |
 |---|---|---|
 | SRAM | 520 KB | 264 KB |
-| firmware static RAM (incl. 24/12 KB stack) | 60 KB | 49 KB |
+| firmware static RAM (incl. 24/12 KB stack) | 64 KB | 52 KB |
 | free heap at the prompt | ~450 KB | ~200 KB |
 | memory a program gets (auto) | ~400 KB | ~150 KB |
-| flash used by the firmware | 335 KB | 337 KB |
+| flash used by the firmware | 412 KB | 420 KB |
 
-The compiler, the editor buffer and the VM each allocate memory only while they run and free it on return, so each tool gets nearly all of RAM. `mem` shows the free heap and the largest free block. Compiling a small program takes about 70 KB, mostly the built-in library's declarations. Compiling the compiler itself takes about 300 KB natively, or about 320 KB of VM memory for the self-hosted version.
+The compiler, the editor buffer and the VM each allocate memory only while they run and free it on return, so each tool gets nearly all of RAM. `mem` shows the free heap and the largest free block. Compiling a small program takes about 70 KB, mostly the built-in library's declarations. Compiling the compiler itself takes about 300 KB natively, or about 330 KB of VM memory for the self-hosted version.
 
 ## Building
 
@@ -235,14 +275,17 @@ make && CALCIDE_ROOT=sdroot ./build-host/calcide
 make test
 ```
 
-This runs 27 checks:
+This runs 38 checks:
 
-- 11 C programs, each compiled by CalcIDE and run on the VM, with output compared against the same program built by the host gcc.
-- 10 deliberate errors (runtime and compile-time).
+- 14 C programs, each compiled by CalcIDE and run on the VM, with output compared against the same program built by the host gcc. They cover 64-bit arithmetic, `double` maths, variadic functions, `setjmp`, designated initializers, compound literals and stringizing.
+- 11 deliberate errors: runtime errors, and compile errors including the multi-error report.
 - The self-hosting check: the native compiler compiles `cc.c`, the VM-hosted compiler compiles `cc.c` again, and the two `.cbc` files must be identical.
 - The self-hosted compiler builds a working program.
 - The firmware's FatFs layer against FAT32 and FAT16 disk images, checked afterwards with `fsck.vfat`.
-- Scripted shell and editor sessions.
+- The boot-screen BMP decoder on 1, 4, 8, 24 and 32-bit images, checked pixel by pixel against PIL.
+- Scripted shell and editor sessions, including tabs, auto-close and `show_stats`.
+
+The error recovery was also fuzzed during development with 1,600 randomly broken programs, with no crashes or hangs. On 120 of them, the native and self-hosted compilers gave identical messages.
 
 ## Troubleshooting
 

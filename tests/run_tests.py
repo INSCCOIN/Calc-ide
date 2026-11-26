@@ -97,6 +97,12 @@ def main():
             report(r.returncode == 0 and "fatfs ok" in out and fsck.returncode == 0,
                    "fatfs FAT%s (and fsck clean)" % bits, out + fsck.stdout.decode())
 
+    # the boot-screen BMP decoder against PIL
+    if os.path.exists(IDE):
+        r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "bmp_test.py")], capture_output=True)
+        for line in r.stdout.decode().splitlines():
+            report(line.startswith("PASS"), line.split(" ", 1)[1], line)
+
     # shell scripts
     if os.path.exists(IDE):
         for f in sorted(glob.glob(os.path.join(ROOT, "tests", "shell", "*.txt"))):

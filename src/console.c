@@ -399,7 +399,7 @@ int con_kbhit(void)
 
 int con_poll_break(void)
 {
-    return hal_poll_break(kq_push);
+    return hal_poll_break(conf_is_break, kq_push);
 }
 
 void hal_dump_screen(void) __attribute__((weak));

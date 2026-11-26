@@ -43,12 +43,19 @@ typedef struct {
     char msg[64];
     char find[40];
     int match_pos, match_len;
-    char *clip;
-    int clip_len;
-    int quit;
 } Ed;
 
-static Ed E;
+/* Several files can be open at once, one per tab (max_files in the
+ * settings). E is always the tab being edited. */
+#define MAX_TABS 8
+static Ed tabs[MAX_TABS];
+static int ntabs, cur;
+static int open_tab(const char *full);
+#define E (tabs[cur])
+
+static char *clip;           /* shared by all tabs: copy between files */
+static int clip_len;
+static int ed_quit;
 
 /* ------------------------------------------------------------------ */
 /* gap buffer                                                          */
@@ -320,7 +327,33 @@ static void draw_hints(void)
         ? " ^S Save ^F Find ^G Goto ^X/^C/^V Line F9 Build F5 Run F1 Help ^Q Quit"
         : " ^S Save ^F Find F5 Run F1 Help ^Q Quit";
     con_fill_rect(0, 0, cols, 1, ' ', a);
-    con_text_at(0, 0, h, a, cols);
+    if (ntabs <= 1) {
+        con_text_at(0, 0, h, a, cols);
+        return;
+    }
+    {
+        /* a tab strip: start far enough left that the current tab shows */
+        char label[40];
+        int i, x = 0, first = 0, w[MAX_TABS];
+        for (i = 0; i < ntabs; i++) {
+            snprintf(label, sizeof label, " %d:%s%s ", i + 1,
+                     tabs[i].path[0] ? vfs_basename(tabs[i].path) : "new", tabs[i].modified ? "*" : "");
+            w[i] = (int)strlen(label);
+        }
+        for (;;) {
+            int need = 0;
+            for (i = first; i <= cur; i++) need += w[i];
+            if (need <= cols || first == cur) break;
+            first++;
+        }
+        for (i = first; i < ntabs && x < cols; i++) {
+            int ta = i == cur ? ATTR(g_conf.ed_fg, g_conf.ed_bg) : a;
+            snprintf(label, sizeof label, " %d:%s%s ", i + 1,
+                     tabs[i].path[0] ? vfs_basename(tabs[i].path) : "new", tabs[i].modified ? "*" : "");
+            con_text_at(x, 0, label, ta, cols - x);
+            x += w[i];
+        }
+    }
 }
 
 static void draw(void)
@@ -497,11 +530,11 @@ static void copy_line(int cut)
 {
     int s = line_start(E.pos), e = line_end(E.pos), i;
     if (e < len()) e++;
-    free(E.clip);
-    E.clip = (char *)malloc((size_t)(e - s) + 1);
-    if (!E.clip) { E.clip_len = 0; return; }
-    for (i = s; i < e; i++) E.clip[i - s] = (char)ch(i);
-    E.clip_len = e - s;
+    free(clip);
+    clip = (char *)malloc((size_t)(e - s) + 1);
+    if (!clip) { clip_len = 0; return; }
+    for (i = s; i < e; i++) clip[i - s] = (char)ch(i);
+    clip_len = e - s;
     if (cut) { del(s, e - s); E.pos = s; if (E.pos > len()) E.pos = len(); }
     snprintf(E.msg, sizeof E.msg, cut ? "Line cut" : "Line copied");
 }
@@ -509,10 +542,10 @@ static void copy_line(int cut)
 static void paste(void)
 {
     int s = line_start(E.pos);
-    if (!E.clip_len) return;
-    if (E.clip[E.clip_len - 1] == '\n') {
-        if (ins(s, E.clip, E.clip_len)) E.pos = s + E.clip_len;
-    } else if (ins(E.pos, E.clip, E.clip_len)) E.pos += E.clip_len;
+    if (!clip_len) return;
+    if (clip[clip_len - 1] == '\n') {
+        if (ins(s, clip, clip_len)) E.pos = s + clip_len;
+    } else if (ins(E.pos, clip, clip_len)) E.pos += clip_len;
 }
 
 static void newline(void)
@@ -527,8 +560,26 @@ static void newline(void)
             for (k = 0; k < g_conf.tabsize && n < 62; k++) ind[n++] = ' ';
         }
     }
+    /* Enter between an auto-closed pair of braces opens the block */
+    if (g_conf.auto_close && E.pos > 0 && E.pos < len() && ch(E.pos - 1) == '{' && ch(E.pos) == '}') {
+        int k, outer = n - g_conf.tabsize;
+        if (ins(E.pos, "\n", 1)) E.pos++;
+        if (n && ins(E.pos, ind, n)) E.pos += n;
+        if (ins(E.pos, "\n", 1) && outer > 0) ins(E.pos + 1, ind, outer);
+        (void)k;
+        return;
+    }
     if (ins(E.pos, "\n", 1)) E.pos++;
     if (n && ins(E.pos, ind, n)) E.pos += n;
+}
+
+static int closer(int c)
+{
+    if (c == '(') return ')';
+    if (c == '[') return ']';
+    if (c == '{') return '}';
+    if (c == '"' || c == '\'') return c;
+    return 0;
 }
 
 static void build(int and_run)
@@ -552,6 +603,9 @@ static void build(int and_run)
     con_getkey();
     con_clear();
     if (rc != 0 && line > 0) {
+        /* the error may be in an included file: open it in a tab */
+        if (shell_err_file[0] && strcmp(shell_err_file, E.path) != 0 && vfs_stat(shell_err_file, 0, 0))
+            open_tab(shell_err_file);
         E.pos = pos_of_line(line - 1);
         snprintf(E.msg, sizeof E.msg, "Error at line %d", line);
     } else if (rc == 0) snprintf(E.msg, sizeof E.msg, and_run ? "Program finished" : "Build OK");
@@ -569,6 +623,9 @@ static void help(void)
         "Ctrl+X   cut line  Ctrl+C copy line",
         "Ctrl+V   paste     Ctrl+D duplicate",
         "Ctrl+K   delete line",
+        "Ctrl+O   open (new tab)",
+        "F6/F7    previous/next tab",
+        "Ctrl+W   close tab",
         "Tab      indent    Ctrl+T top/bottom",
         "F9/Ctrl+B compile",
         "F5/Ctrl+R compile and run",
@@ -589,11 +646,66 @@ static void help(void)
 static int ask_save_and_quit(void)
 {
     int r;
+    char q[80];
     if (!E.modified) return 1;
-    r = confirm(" Save changes? (y/n, Esc=cancel) ");
+    snprintf(q, sizeof q, " Save %s? (y/n, Esc=cancel) ", E.path[0] ? vfs_basename(E.path) : "changes");
+    r = confirm(q);
     if (r < 0) return 0;
     if (r == 1 && !save()) return 0;
     return 1;
+}
+
+/* open a file in a tab of its own, or switch to it if it is open */
+static int open_tab(const char *full)
+{
+    int i, max = g_conf.max_files;
+    if (max < 1) max = 1;
+    if (max > MAX_TABS) max = MAX_TABS;
+    for (i = 0; i < ntabs; i++)
+        if (full[0] && !strcmp(tabs[i].path, full)) { cur = i; return 1; }
+    if (ntabs >= max) {
+        snprintf(E.msg, sizeof E.msg, "%d files open (max_files = %d)", ntabs, max);
+        return 0;
+    }
+    cur = ntabs++;
+    memset(&E, 0, sizeof E);
+    E.want_col = -1;
+    if (!load(full)) {
+        ntabs--;
+        cur = ntabs > 0 ? ntabs - 1 : 0;
+        if (ntabs) snprintf(E.msg, sizeof E.msg, "Out of memory");
+        return 0;
+    }
+    return 1;
+}
+
+static void close_tab(void)
+{
+    int i;
+    if (!ask_save_and_quit()) return;
+    free(E.buf);
+    for (i = cur; i < ntabs - 1; i++) tabs[i] = tabs[i + 1];
+    ntabs--;
+    memset(&tabs[ntabs], 0, sizeof(Ed));
+    if (ntabs == 0) { ed_quit = 1; cur = 0; return; }
+    if (cur >= ntabs) cur = ntabs - 1;
+    con_clear();
+}
+
+static void quit_all(void)
+{
+    int i;
+    for (i = 0; i < ntabs; i++) {
+        cur = i;
+        if (E.modified) {
+            con_clear();
+            if (!ask_save_and_quit()) return;   /* Esc: stay in the editor */
+        }
+    }
+    for (i = 0; i < ntabs; i++) { free(tabs[i].buf); tabs[i].buf = 0; }
+    ntabs = 0;
+    cur = 0;
+    ed_quit = 1;
 }
 
 static void key(int k)
@@ -631,6 +743,12 @@ static void key(int k)
     case KEY_CHOME: E.pos = 0; break;
     case KEY_CEND: E.pos = len(); break;
     case '\b': case 127:
+        /* backspace inside an empty pair removes both halves */
+        if (g_conf.auto_close && E.pos > 0 && E.pos < len() && closer(ch(E.pos - 1)) && closer(ch(E.pos - 1)) == ch(E.pos)) {
+            del(E.pos - 1, 2);
+            E.pos--;
+            break;
+        }
         if (E.pos > 0) {
             /* backspace over a soft tab */
             int s = line_start(E.pos), i, all = 1, ts = g_conf.tabsize;
@@ -683,19 +801,39 @@ static void key(int k)
     }
     case KEY_CTRL('o'): {
         char name[VFS_PATH] = "", full[VFS_PATH];
-        if (!ask_save_and_quit()) break;
-        if (prompt("Open: ", name, sizeof name) > 0 && vfs_resolve(name, full)) load(full);
+        if (prompt("Open: ", name, sizeof name) > 0 && vfs_resolve(name, full)) {
+            int was = cur;
+            if (open_tab(full)) con_clear();
+            else if (was < ntabs && cur != was) cur = was;
+        }
         break;
     }
+    case KEY_F6: if (ntabs > 1) { cur = (cur + ntabs - 1) % ntabs; con_clear(); } return;
+    case KEY_F7: if (ntabs > 1) { cur = (cur + 1) % ntabs; con_clear(); } return;
+    case KEY_CTRL('w'): close_tab(); return;
     case KEY_F9: case KEY_CTRL('b'): build(0); break;
     case KEY_F5: case KEY_CTRL('r'): build(1); break;
     case KEY_F1: help(); break;
     case KEY_ESC: case KEY_CTRL('q'):
-        if (ask_save_and_quit()) E.quit = 1;
-        break;
+        quit_all();
+        return;
     default:
         if (k >= 32 && k < 127) {
             char c = (char)k;
+            if (g_conf.auto_close) {
+                int nx = E.pos < len() ? ch(E.pos) : 0;
+                int pv = E.pos > 0 ? ch(E.pos - 1) : 0;
+                /* typing a closer that is already there just steps over it */
+                if ((k == ')' || k == ']' || k == '}' || k == '"' || k == '\'') && nx == k) { E.pos++; return; }
+                if (k == '(' || k == '[' || k == '{'
+                    || ((k == '"' || k == '\'') && !isalnum(pv) && pv != '\\' && pv != k)) {
+                    char pair[2];
+                    pair[0] = c;
+                    pair[1] = (char)closer(k);
+                    if (ins(E.pos, pair, 2)) E.pos++;
+                    return;
+                }
+            }
             if (ins(E.pos, &c, 1)) E.pos++;
             /* a closing brace on an otherwise blank line moves out a level */
             if (k == '}') {
@@ -710,23 +848,41 @@ static void key(int k)
     if (k != KEY_UP && k != KEY_DOWN) E.want_col = -1;
 }
 
-int editor_run(const char *path)
+int editor_open(int n, char **paths)
 {
     char full[VFS_PATH] = "";
-    memset(&E, 0, sizeof E);
-    E.want_col = -1;
-    if (path && *path && !vfs_resolve(path, full)) { con_printf("edit: bad path\n"); return 1; }
-    if (!load(full)) { con_printf("edit: out of memory\n"); return 1; }
+    int i;
+    memset(tabs, 0, sizeof tabs);
+    ntabs = 0;
+    cur = 0;
+    ed_quit = 0;
+    for (i = 0; i < n || (n == 0 && i == 0); i++) {
+        full[0] = 0;
+        if (n > 0 && !vfs_resolve(paths[i], full)) { con_printf("edit: bad path %s\n", paths[i]); continue; }
+        if (!open_tab(full)) {
+            if (!ntabs) { con_printf("edit: out of memory\n"); return 1; }
+            break;
+        }
+    }
+    if (!ntabs) return 1;
+    cur = 0;
     con_clear();
-    while (!E.quit) {
+    while (!ed_quit) {
         draw();
         key(con_getkey());
     }
-    free(E.buf);
-    free(E.clip);
-    E.buf = E.clip = 0;
+    for (i = 0; i < MAX_TABS; i++) { free(tabs[i].buf); tabs[i].buf = 0; }
+    free(clip);
+    clip = 0;
+    clip_len = 0;
     con_place_cursor(-1, -1);
     con_default_color();
     con_clear();
     return 0;
+}
+
+int editor_run(const char *path)
+{
+    char *p = (char *)path;
+    return editor_open(path && *path ? 1 : 0, &p);
 }

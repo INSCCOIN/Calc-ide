@@ -1,6 +1,6 @@
 # The CalcIDE compiler and VM
 
-CalcIDE compiles a C dialect ("Tiny-C") to compact bytecode, which a virtual machine runs with runtime checks. The compiler is about 3,000 lines in `cc/cc.c`, written in the same dialect. It compiles itself: the copy the native compiler builds and the copy that copy builds are byte-identical.
+CalcIDE compiles a C dialect ("Tiny-C") to compact bytecode, which a virtual machine runs with runtime checks. The compiler is about 4,800 lines in `cc/cc.c`, written in the same dialect. It compiles itself: the copy the native compiler builds and the copy that copy builds are byte-identical.
 
 ## Contents
 
@@ -31,7 +31,15 @@ In the editor, **F9** compiles and **F5** compiles and runs. After a compile err
 /projects/game/life.c:42: error: undeclared identifier 'neighbors'
 ```
 
-The compiler stops at the first error. Calling an undeclared function is allowed (it's assumed to return `int`), but it prints a warning.
+Each error names the file, line and column, then shows the line with a caret under the problem:
+
+```
+multi.c:5:12: error: expected expression
+    5|     x = y +;
+     |            ^
+```
+
+After an error, the compiler skips to the end of that statement (or declaration) and carries on. Up to 10 errors are reported per compile, then it stops. A `;` missing at the end of a line is reported, and the compiler continues as if it were there, so the next line is still checked. No `.cbc` is written if there were errors. Calling an undeclared function is allowed (it's assumed to return `int`), but it prints a warning.
 
 ## The language
 
@@ -42,8 +50,9 @@ The compiler stops at the first error. Calling an undeclared function is allowed
 | `char`, `signed char`, `unsigned char` | 1 | plain `char` is signed |
 | `short`, `unsigned short` | 2 | |
 | `int`, `unsigned`, `long`, `unsigned long` | 4 | |
-| `long long` | 4 | accepted, but 32-bit |
-| `float`, `double`, `long double` | 4 | all IEEE single precision |
+| `long long`, `unsigned long long` | 8 | 64-bit; constants with `LL`/`ULL`, or too big for 32 bits |
+| `float` | 4 | IEEE single precision; constants with an `f` suffix |
+| `double`, `long double` | 8 | IEEE double precision; unsuffixed constants like `0.1` are `double` |
 | pointers, function pointers | 4 | pointers to pointers to any depth |
 | arrays | | any number of dimensions, `T a[] = {...}` sizes from the initializer |
 | `struct`, `union` | | nested, self-referential, arrays of structs, structs in unions |
@@ -81,11 +90,26 @@ All C operators are supported, with C precedence and associativity:
 - Function pointers can be stored, passed, kept in tables and called.
 - `main` can be `int main(void)` or `int main(int argc, char **argv)`.
 - A program may define its own function with the same name as a builtin; its version wins.
+- **Variadic functions** of your own work with `<stdarg.h>`: `va_list`, `va_start`, `va_arg`, `va_end`, `va_copy`. The usual promotions apply (`float` arguments arrive as `double`), and `vprintf`, `vsprintf`, `vsnprintf` and `vfprintf` take a `va_list`:
+
+```c
+void logmsg(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vprintf(fmt, ap);
+    va_end(ap);
+}
+```
+
+- `setjmp` and `longjmp` (`<setjmp.h>`) work across any number of calls.
 
 ### Initializers
 
 - Scalars, strings into `char` arrays, and nested brace lists for arrays and structs, with missing elements set to zero.
-- Global initializers may be any expression. Constants are stored in the program file; anything else runs before `main`.
+- **Designated initializers:** `{.y = 7, .x = 3}` and `{[0] = 31, [11] = 31}`. They can be mixed with plain elements, which carry on from the last designator. An unsized array takes its length from the highest index. Nested designators (`.a.x = 1`) are not supported; write `.a = {.x = 1}`.
+- **Compound literals:** `(struct pt){1, 2}`, `(int[]){1, 2, 3}`, `&(struct pt){.x = 5}`. Inside a function they are unnamed locals; at file scope they must be constant.
+- Global initializers may be any expression. Constants (including `double` and `long long`) are stored in the program file; anything else runs before `main`.
 
 ### Comments
 
@@ -99,7 +123,7 @@ All C operators are supported, with C precedence and associativity:
 | `#include <stdio.h>` | The standard headers are built in, so any `<...>` that isn't found on the card is silently accepted. |
 | `#include <picocalc.h>` | Built in. It adds the key codes and colour names (also available as `<conio.h>` and `<calcide.h>`). |
 | `#define NAME text` | Object-like macros. |
-| `#define F(a, b) text` | Function-like macros, up to 16 parameters. Arguments are fully expanded first, so nesting works. |
+| `#define F(a, b) text` | Function-like macros, up to 16 parameters. Arguments are fully expanded first, so nesting works. `#a` in the body turns the argument's spelling into a string: `#define SHOW(e) printf("%s = %d\n", #e, (e))`. |
 | `#undef` | |
 | `#if`, `#elif`, `#else`, `#endif` | Full integer expressions, including `defined(X)` and `defined X`. |
 | `#ifdef`, `#ifndef` | |
@@ -114,8 +138,8 @@ Everything below is always declared, so `#include` lines are optional. The full 
 
 **stdio:** `printf`, `sprintf`, `snprintf`, `fprintf`, `putchar`, `puts`, `getchar`, `gets`, `fgets`, `scanf`, `sscanf`, `fopen`, `fclose`, `fgetc`/`getc`, `fputc`/`putc`, `fputs`, `fread`, `fwrite`, `fseek`, `ftell`, `rewind`, `feof`, `fflush`, `remove`, `rename`, `mkdir`, `fsize`.
 
-- `printf` supports `%d %i %u %x %X %o %c %s %p %f %e %g %%`, with flags `- + space # 0`, widths and precisions (including `*`), and the `l`/`h` modifiers (accepted and ignored).
-- `scanf`/`sscanf` support `%d %i %u %x %o %c %s %f %e %g %[...] %n`, with widths and `*`.
+- `printf` supports `%d %i %u %x %X %o %c %s %p %f %e %g %a %n %%`, with flags `- + space # 0`, widths and precisions (including `*`). `%lld`/`%llu`/`%llx` print `long long`; `%f`/`%e`/`%g` print `double` (and `float`, which is promoted).
+- `scanf`/`sscanf` support `%d %i %u %x %o %c %s %f %e %g %[...] %n`, with widths and `*`. `%lf` reads a `double`, `%f` a `float`, `%lld` a `long long`.
 - Files live on the SD card, with paths relative to the shell's current directory. Mode is `"r"`, `"w"` or `"a"`, optionally with `+`. Up to 8 files can be open at once, and all are closed when the program ends.
 - `stdin` reads a line at a time with the line editor, `stdout` is the console, and `stderr` is the console in red.
 
@@ -123,9 +147,11 @@ Everything below is always declared, so `#include` lines are optional. The full 
 
 **ctype:** `isdigit`, `isalpha`, `isalnum`, `isspace`, `isupper`, `islower`, `isxdigit`, `ispunct`, `isprint`, `toupper`, `tolower`.
 
-**stdlib:** `malloc`, `calloc`, `realloc`, `free`, `atoi`, `atof`, `strtol`, `strtof`, `abs`/`labs`, `rand`, `srand`, `qsort` (your comparison function is called from the VM), `exit`, `abort`, `assert`, `heap_free()` (bytes of free heap).
+**stdlib:** `malloc`, `calloc`, `realloc`, `free`, `atoi`, `atoll`, `atof`, `strtol`, `strtoll`, `strtod`, `strtof`, `abs`/`labs`, `llabs`, `rand`, `srand`, `qsort` (your comparison function is called from the VM), `exit`, `abort`, `assert`, `heap_free()` (bytes of free heap).
 
-**math** (all `float`): `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sqrt`, `pow`, `exp`, `log`, `log10`, `floor`, `ceil`, `fabs`, `fmod`, `round`, `fmin`, `fmax`. The `f` suffixed forms (`sqrtf`, ...) are aliases.
+**setjmp, stdarg:** `setjmp`, `longjmp`, `va_start`, `va_arg`, `va_end`, `va_copy`, `vprintf`, `vsprintf`, `vsnprintf`, `vfprintf`.
+
+**math:** `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sqrt`, `pow`, `exp`, `log`, `log10`, `floor`, `ceil`, `fabs`, `fmod`, `round`, `fmin`, `fmax` take and return `double`. Each also has a `float` version with an `f` suffix (`sinf`, `sqrtf`, ...), which is faster on the RP2350's single-precision FPU. `M_PI`, `M_E`, `M_SQRT2`, `DBL_MAX`, `DBL_EPSILON`, `HUGE_VAL`, `INFINITY`, `NAN`, `LLONG_MAX` and friends are predefined.
 
 ## PicoCalc functions
 
@@ -204,14 +230,14 @@ run /bin/cc.cbc /calcide/cc/cc.c -o /bin/cc2.cbc
 - **Single pass, no syntax tree.** Expressions emit stack-machine code as they are parsed. An lvalue leaves its address on the stack, and the load is emitted only when the value is needed, so `a = b`, `a += b`, `&a` and `a.b.c` all fall out of the same code.
 - **Constant folding** happens as code is emitted, by watching for runs of immediate values. The same mechanism evaluates array sizes, `case` labels, `enum` values and global initializers.
 - **Global initializers** that aren't constants become small code fragments, chained to run before `main`.
-- **The preprocessor** is part of the lexer, with token-level macro expansion and recycled buffers. Compiling the compiler (3,000 lines plus 124 built-in declarations) takes 128 KB of compiler memory.
-- **The bytecode** has 79 opcodes, including fused forms for common local loads. A `.cbc` file holds a 48-byte header, the code, the initialised data, a line table, a function table and the source file names. The last three exist so runtime errors can name a line. `tools/cbcdis.py` disassembles a `.cbc`.
+- **The preprocessor** is part of the lexer, with token-level macro expansion and recycled buffers. Compiling the compiler (4,800 lines plus 154 built-in declarations) takes about 160 KB of compiler memory.
+- **The bytecode** has 145 opcodes: 32-bit and 64-bit integer, float and double arithmetic, plus fused forms for local and global loads, store-and-discard, add-immediate and compare-and-branch. A 64-bit value occupies two operand cells. A `.cbc` file holds a 48-byte header, the code, the initialised data, a line table, a function table and the source file names. The last three exist so runtime errors can name a line. `tools/cbcdis.py` disassembles a `.cbc`.
 - **The VM** is a switch interpreter over a 32-bit operand stack. Floats are carried as their IEEE bit patterns. Every load and store is bounds checked.
 
 ## Differences from standard C
 
-- `double` is the same as `float` (32-bit), and `long long` is 32-bit.
-- There are no variadic functions of your own (`...` works only for the builtins), no bit-fields (the width is parsed and ignored), no designated initializers, no compound literals, and no VLAs.
-- In macros, `#` (stringize) and `##` (paste) are not supported, because `##` starts a comment.
+- There are no bit-fields (the width is parsed and ignored), no VLAs, and no nested designators (`.a.x = 1`).
+- In macros, `##` (token pasting) is not supported, because `##` starts a comment. `#` (stringizing) works, but numbers spell themselves in decimal when they come from another macro.
 - Function arguments are evaluated left to right. C leaves the order unspecified, but gcc goes right to left, so code that depends on it behaves differently.
+- `long` is 32-bit, as on most 32-bit C compilers; use `long long` for 64 bits.
 - `main`'s return value is the program's exit code. A runtime error gives exit code -1.

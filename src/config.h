@@ -5,6 +5,10 @@
 #define CONF_PATH "/CalcIDE.conf"
 #define CONF_MAX_ALIAS 24
 
+#include "vfs.h"
+
+enum { BREAK_BOTH = 0, BREAK_CTRLC, BREAK_BRK, BREAK_ESC };
+
 typedef struct {
     int width;          /* 40 or 64 */
     int font;           /* 0 = 8x10, 1 = 5x10 (follows width) */
@@ -33,6 +37,15 @@ typedef struct {
     int lcd_madctl;     /* panel orientation register */
     int lcd_invert;     /* colour inversion */
     int bl_swap;        /* swap the screen/keyboard backlight registers */
+    int cpu_mhz_idle;   /* clock at the prompt and in the editor (0 = cpu_mhz) */
+    int cpu_mhz_run;    /* clock while compiling and running (0 = cpu_mhz) */
+    int splash;         /* boot screen on/off */
+    int splash_ms;      /* how long the boot screen stays */
+    int break_key;      /* BREAK_* */
+    int show_stats;     /* statistics after every program */
+    int auto_close;     /* editor: close brackets and quotes */
+    int max_files;      /* editor: files open at once */
+    char splash_image[VFS_PATH];  /* a .bmp for the boot screen, or empty */
     char prompt[32];    /* prompt format, $p = path */
     char autoexec[96];  /* command run at boot */
     char home[64];      /* start directory */
@@ -49,6 +62,8 @@ int  conf_set(const char *key, const char *val);   /* 0 if unknown key */
 void conf_print(void);
 int  conf_color(const char *name);                 /* name or number, -1 if bad */
 const char *conf_color_name(int c);
+const char *conf_break_name(int b);
+int  conf_is_break(int key);                       /* per break_key */
 const char *alias_find(const char *name);
 int  alias_set(const char *name, const char *cmd); /* cmd NULL/"" removes */
 

@@ -23,6 +23,22 @@ static const char *cnames[16] = {
 
 const char *conf_color_name(int c) { return (c >= 0 && c < 16) ? cnames[c] : "?"; }
 
+int conf_is_break(int k)
+{
+    switch (g_conf.break_key) {
+    case BREAK_CTRLC: return k == KEY_CTRL('c');
+    case BREAK_BRK: return k == KEY_BREAK;
+    case BREAK_ESC: return k == KEY_ESC;
+    default: return k == KEY_CTRL('c') || k == KEY_BREAK;
+    }
+}
+
+const char *conf_break_name(int b)
+{
+    static const char *bk[] = {"both", "ctrlc", "brk", "esc"};
+    return (b >= 0 && b < 4) ? bk[b] : "both";
+}
+
 int conf_color(const char *s)
 {
     int i;
@@ -74,6 +90,15 @@ void conf_defaults(void)
     g_conf.lcd_madctl = 0x48;
     g_conf.lcd_invert = 1;
     g_conf.bl_swap = 0;
+    g_conf.cpu_mhz_idle = 0;
+    g_conf.cpu_mhz_run = 0;
+    g_conf.splash = 1;
+    g_conf.splash_ms = 3000;
+    g_conf.break_key = BREAK_BOTH;
+    g_conf.show_stats = 0;
+    g_conf.auto_close = 1;
+    g_conf.max_files = 4;
+    g_conf.splash_image[0] = 0;
     strcpy(g_conf.prompt, "$p> ");
     strcpy(g_conf.home, "/");
 }
@@ -118,6 +143,13 @@ static IntKey ikeys[] = {
     {"lcd_madctl", &g_conf.lcd_madctl, 0, 255, 0},
     {"lcd_invert", &g_conf.lcd_invert, 0, 1, 0},
     {"bl_swap", &g_conf.bl_swap, 0, 1, 0},
+    {"cpu_mhz_idle", &g_conf.cpu_mhz_idle, 0, 300, 0},
+    {"cpu_mhz_run", &g_conf.cpu_mhz_run, 0, 300, 0},
+    {"splash", &g_conf.splash, 0, 1, 0},
+    {"splash_ms", &g_conf.splash_ms, 0, 30000, 0},
+    {"show_stats", &g_conf.show_stats, 0, 1, 0},
+    {"auto_close", &g_conf.auto_close, 0, 1, 0},
+    {"max_files", &g_conf.max_files, 1, 8, 0},
     {0, 0, 0, 0, 0}
 };
 
@@ -136,6 +168,12 @@ int conf_set(const char *key, const char *val)
     if (!strcasecmp(key, "prompt")) { snprintf(g_conf.prompt, sizeof g_conf.prompt, "%s", val); return 1; }
     if (!strcasecmp(key, "autoexec")) { snprintf(g_conf.autoexec, sizeof g_conf.autoexec, "%s", val); return 1; }
     if (!strcasecmp(key, "home")) { snprintf(g_conf.home, sizeof g_conf.home, "%s", val); return 1; }
+    if (!strcasecmp(key, "splash_image")) { snprintf(g_conf.splash_image, sizeof g_conf.splash_image, "%s", val); return 1; }
+    if (!strcasecmp(key, "break_key")) {
+        static const char *bk[] = {"both", "ctrlc", "brk", "esc"};
+        for (i = 0; i < 4; i++) if (!strcasecmp(val, bk[i])) { g_conf.break_key = i; return 1; }
+        return -1;
+    }
     for (i = 0; ikeys[i].key; i++) {
         if (strcasecmp(key, ikeys[i].key) != 0) continue;
         if (ikeys[i].color && (v = conf_color(val)) >= 0) { *ikeys[i].ip = v; return 1; }
@@ -214,6 +252,8 @@ int conf_save(void)
     emit(&p, end, "prompt = \"%s\"\n", g_conf.prompt);
     emit(&p, end, "home = %s\n", g_conf.home);
     emit(&p, end, "autoexec = %s\n", g_conf.autoexec);
+    emit(&p, end, "splash_image = %s\n", g_conf.splash_image);
+    emit(&p, end, "break_key = %s\n", conf_break_name(g_conf.break_key));
     for (i = 0; i < CONF_MAX_ALIAS; i++)
         if (g_conf.alias_name[i][0]) emit(&p, end, "alias.%s = %s\n", g_conf.alias_name[i], g_conf.alias_cmd[i]);
     ok = vfs_save(CONF_PATH, buf, (int)(p - buf));
@@ -231,6 +271,8 @@ void conf_print(void)
     con_printf("%-14s \"%s\"\n", "prompt", g_conf.prompt);
     con_printf("%-14s %s\n", "home", g_conf.home);
     con_printf("%-14s %s\n", "autoexec", g_conf.autoexec);
+    con_printf("%-14s %s\n", "splash_image", g_conf.splash_image[0] ? g_conf.splash_image : "(logo)");
+    con_printf("%-14s %s\n", "break_key", conf_break_name(g_conf.break_key));
 }
 
 const char *alias_find(const char *name)

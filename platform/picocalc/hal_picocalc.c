@@ -183,14 +183,21 @@ int hal_key(void)
     return k ? k : -1;
 }
 
-int hal_poll_break(void (*queue)(int key))
+int hal_poll_break(int (*is_break)(int key), void (*queue)(int key))
 {
     int k, guard = 0;
     while ((k = hal_key()) >= 0 && guard++ < 16) {
-        if (k == KEY_BREAK || k == KEY_CTRL('c')) return 1;
+        if (is_break(k)) return 1;
         queue(k);
     }
     return 0;
+}
+
+void hal_blit(int x, int y, int w, int h, const uint16_t *px)
+{
+    if (w <= 0 || h <= 0) return;
+    lcd_window(x, y, w, h);
+    lcd_blit(px, w * h);
 }
 
 int hal_modifiers(void) { return kbd_modifiers(); }
@@ -268,17 +275,27 @@ int hal_battery(int *charging)
 
 int hal_cpu_khz(void) { return (int)(clock_get_hz(clk_sys) / 1000u); }
 
+#if PICO_RP2350
+#define DEFAULT_MHZ 150
+#else
+#define DEFAULT_MHZ 125
+#endif
+
 int hal_set_cpu_mhz(int mhz)
 {
+    int was = hal_cpu_khz() / 1000;
     if (esc_boot) return 0;
-#if PICO_RP2350
+    if (mhz == 0) mhz = DEFAULT_MHZ;           /* 0: the chip's own default */
     if (mhz < 48 || mhz > 300) return 0;
-    if (mhz > 150) { vreg_set_voltage(mhz > 250 ? VREG_VOLTAGE_1_25 : VREG_VOLTAGE_1_15); sleep_ms(10); }
-#else
-    if (mhz < 48 || mhz > 250) return 0;
-    if (mhz > 133) { vreg_set_voltage(VREG_VOLTAGE_1_15); sleep_ms(10); }
+#if !PICO_RP2350
+    if (mhz > 250) return 0;
 #endif
+    if (mhz == was) return 1;
+    /* raise the core voltage before speeding up */
+    if (mhz > DEFAULT_MHZ + 8) { vreg_set_voltage(mhz > 250 ? VREG_VOLTAGE_1_25 : VREG_VOLTAGE_1_15); sleep_ms(5); }
     if (!set_sys_clock_khz((uint32_t)mhz * 1000u, false)) return 0;
+    /* and lower it again after slowing down */
+    if (mhz <= DEFAULT_MHZ + 8) vreg_set_voltage(VREG_VOLTAGE_DEFAULT);
     /* clk_peri follows clk_sys: re-time the buses */
     lcd_reclock();
     sd_reclock();
@@ -458,6 +475,7 @@ void hal_init(void)
 }
 
 int hal_safe_mode(void) { return esc_boot; }
+int hal_batch(void) { return 0; }
 
 /* The SDK gives core 0 a 4 KB stack in scratch RAM. The compiler, the VM
  * and printf together want more, so main() moves onto a bigger one. MSPLIM

@@ -433,7 +433,7 @@ static int c_uptime(int argc, char **argv)
 static int c_version(int argc, char **argv)
 {
     con_printf("CalcIDE %s - on-device C IDE for the PicoCalc\n", CALCIDE_VERSION);
-    con_printf("Tiny-C compiler %s, bytecode v1, self-hosting\n", CALCIDE_VERSION);
+    con_printf("Tiny-C compiler %s, bytecode v2, self-hosting\n", CALCIDE_VERSION);
     con_printf("chip %s, built %s\n", hal_chip(), __DATE__);
     return 0;
 }
@@ -448,15 +448,23 @@ static int c_temp(int argc, char **argv)
 static int c_clock(int argc, char **argv)
 {
     if (argc > 1) {
-        int m = atoi(argv[1]);
+        int *slot = &g_conf.cpu_mhz;
+        const char *v = argv[1];
+        int m;
+        if (!strcasecmp(argv[1], "idle")) { slot = &g_conf.cpu_mhz_idle; v = argc > 2 ? argv[2] : "0"; }
+        else if (!strcasecmp(argv[1], "run")) { slot = &g_conf.cpu_mhz_run; v = argc > 2 ? argv[2] : "0"; }
+        m = atoi(v);
         if (m != 0 && (m < 48 || m > 300)) { err("clock", "MHz between 48 and 300, or 0 for the default", 0); return 1; }
-        g_conf.cpu_mhz = m;
+        *slot = m;
         conf_save();
-        if (hal_set_cpu_mhz(m ? m : 150)) con_printf("clock set to %d MHz\n", hal_cpu_khz() / 1000);
-        else con_printf("saved: %d MHz from the next restart\n", m);
-        return 0;
+        clock_idle();
     }
     con_printf("CPU clock: %d.%03d MHz\n", hal_cpu_khz() / 1000, hal_cpu_khz() % 1000);
+    con_printf("  base %s, idle %s, run %s\n",
+               g_conf.cpu_mhz ? "set" : "default",
+               g_conf.cpu_mhz_idle ? "set" : "= base", g_conf.cpu_mhz_run ? "set" : "= base");
+    if (g_conf.cpu_mhz || g_conf.cpu_mhz_idle || g_conf.cpu_mhz_run)
+        con_printf("  (cpu_mhz %d, cpu_mhz_idle %d, cpu_mhz_run %d)\n", g_conf.cpu_mhz, g_conf.cpu_mhz_idle, g_conf.cpu_mhz_run);
     return 0;
 }
 
@@ -879,6 +887,7 @@ static int c_cat(int argc, char **argv)
         f = vfs_open(p, "r");
         if (!f) { err(argv[0], vfs_error(), p); rc = 1; continue; }
         page_rows = 0;
+        col = 0;
         while ((n = vfs_read(f, buf, sizeof buf)) > 0) {
             int k, stop = 0;
             for (k = 0; k < n; k++) {
@@ -894,6 +903,7 @@ static int c_cat(int argc, char **argv)
             if (stop || con_poll_break()) break;
         }
         vfs_close(f);
+        if (col != 0) con_putc('\n');   /* the file did not end with a newline */
     }
     if (argc < 2) { con_printf("usage: %s FILE...\n", argv[0]); return 1; }
     return rc;
@@ -946,7 +956,7 @@ static int c_hex(int argc, char **argv)
 static int c_edit(int argc, char **argv)
 {
     if (!need_sd("edit")) return 1;
-    return editor_run(argc > 1 ? argv[1] : "");
+    return editor_open(argc - 1, argv + 1);
 }
 
 /* ------------------------------------------------------------------ */
@@ -955,15 +965,65 @@ static int c_edit(int argc, char **argv)
 
 static int *err_line_out;
 static char err_file_want[VFS_PATH];
+char shell_err_file[VFS_PATH];
+
+/* ------------------------------------------------------------------ */
+/* CPU clock: cpu_mhz_run while compiling and running, cpu_mhz_idle    */
+/* at the prompt and in the editor (0 = cpu_mhz, then the default)     */
+/* ------------------------------------------------------------------ */
+
+static int clock_now = -1;
+
+static void clock_set(int mhz)
+{
+    if (mhz == clock_now) return;
+    if (hal_safe_mode()) return;
+    if (hal_set_cpu_mhz(mhz)) clock_now = mhz;
+}
+
+void clock_run(void)
+{
+    clock_set(g_conf.cpu_mhz_run ? g_conf.cpu_mhz_run : g_conf.cpu_mhz);
+}
+
+void clock_idle(void)
+{
+    clock_set(g_conf.cpu_mhz_idle ? g_conf.cpu_mhz_idle : g_conf.cpu_mhz);
+}
+
+/* run a program: faster clock, statistics, exit code */
+static int run_program(const char *path, int argc, char **argv)
+{
+    int rc;
+    clock_run();
+    rc = vm_run_file(path, argc, argv);
+    clock_idle();
+    con_default_color();
+    con_cursor(g_conf.cursor);
+    if (g_conf.show_stats) {
+        con_set_fg(8);
+        if (con_x() != 0) con_putc('\n');
+        con_printf("[%u instr, %u ms, heap %u KB, stack %u B, exit %d]\n", (unsigned)vm_last.instructions,
+                   (unsigned)vm_last.ms, (unsigned)((vm_last.heap_peak + 1023) / 1024), (unsigned)vm_last.stack_peak, rc);
+        con_default_color();
+    } else if (rc != 0) con_printf("[exit code %d]\n", rc);
+    return rc;
+}
 
 static int cc_hook(const char *s, int n)
 {
-    /* "file:LINE: error: ..." - remember the first error line in the file */
+    /* "file:LINE:COL: error: ..." - remember the first error and its file */
     if (err_line_out && *err_line_out == 0) {
         const char *c1 = memchr(s, ':', (size_t)n);
         if (c1 && strstr(s, "error")) {
             int ln = atoi(c1 + 1);
-            if (ln > 0) *err_line_out = ln;
+            if (ln > 0) {
+                int fl = (int)(c1 - s);
+                *err_line_out = ln;
+                if (fl >= VFS_PATH) fl = VFS_PATH - 1;
+                memcpy(shell_err_file, s, (size_t)fl);
+                shell_err_file[fl] = 0;
+            }
         }
     }
     if (strstr(s, "error")) con_set_fg(9);
@@ -992,11 +1052,14 @@ int shell_compile(const char *src, char *out, int *errline)
     argv[3] = out;
     argv[4] = 0;
     if (errline) *errline = 0;
+    shell_err_file[0] = 0;
     err_line_out = errline;
     snprintf(err_file_want, sizeof err_file_want, "%s", in);
     cc_out_hook = cc_hook;
+    clock_run();
     t0 = hal_millis();
     rc = cc_compile(4, argv);
+    clock_idle();
     cc_out_hook = 0;
     err_line_out = 0;
     if (rc == 0) {
@@ -1013,10 +1076,7 @@ int shell_run_program(const char *path, const char *name)
     int rc;
     argv[0] = (char *)(name ? name : path);
     argv[1] = 0;
-    rc = vm_run_file(path, 1, argv);
-    con_default_color();
-    con_cursor(g_conf.cursor);
-    if (rc != 0) con_printf("\n[exit code %d]\n", rc);
+    rc = run_program(path, 1, argv);
     return rc;
 }
 
@@ -1045,8 +1105,10 @@ static int c_cc(int argc, char **argv)
     }
     av[i] = 0;
     cc_out_hook = cc_hook;
+    clock_run();
     t0 = hal_millis();
     rc = cc_compile(i, av);
+    clock_idle();
     cc_out_hook = 0;
     while (--i > 0) free(av[i]);
     if (rc == 0) {
@@ -1063,7 +1125,7 @@ static int c_run(int argc, char **argv)
     int rc, line;
     size_t l;
     if (argc < 2) { con_puts("usage: run PROG[.c|.cbc] [ARGS...] | run pf:NAME\n"); return 1; }
-    if (strncmp(argv[1], "pf:", 3) == 0) return vm_run_file(argv[1], argc - 1, argv + 1);
+    if (strncmp(argv[1], "pf:", 3) == 0) return run_program(argv[1], argc - 1, argv + 1);
     if (!need_sd("run")) return 1;
     if (!resolve("run", argv[1], p)) return 1;
     l = strlen(p);
@@ -1074,12 +1136,7 @@ static int c_run(int argc, char **argv)
     } else if (!vfs_stat(p, 0, 0) && l + 4 < VFS_PATH) {
         strcat(p, ".cbc");
     }
-    rc = vm_run_file(p, argc - 1, argv + 1);
-    con_default_color();
-    con_cursor(g_conf.cursor);
-    if (rc != 0) con_printf("[exit code %d]\n", rc);
-    if (argc > 0 && getenv("CALCIDE_VMSTATS"))
-        con_printf("[%u instructions, %u ms, heap %u, stack %u]\n", vm_last.instructions, vm_last.ms, vm_last.heap_peak, vm_last.stack_peak);
+    rc = run_program(p, argc - 1, argv + 1);
     return rc;
 }
 
@@ -1270,7 +1327,7 @@ static int c_pf(int argc, char **argv)
         char pn[PF_NAMELEN + 4];
         if (argc < 3) { con_puts("usage: pf run NAME\n"); return 1; }
         snprintf(pn, sizeof pn, "pf:%s", argv[2]);
-        return vm_run_file(pn, argc - 2, argv + 2);
+        return run_program(pn, argc - 2, argv + 2);
     }
     con_puts("usage: pf set|store|get|view|list|dump|free|wipe|format|tree|run\n");
     return 1;
@@ -1309,7 +1366,7 @@ static const Cmd cmds[] = {
     {"version", c_version, "version", "environment and compiler version"},
     {"ver", c_version, "ver", "same as version"},
     {"temp", c_temp, "temp", "RP2350 internal temperature"},
-    {"clock", c_clock, "clock [MHZ]", "show (or set) the CPU clock"},
+    {"clock", c_clock, "clock [MHZ] | clock idle MHZ | clock run MHZ", "show or set the CPU clock (0 = default)"},
     {"backlight", c_backlight, "backlight [0-255] [KBD]", "screen and keyboard backlight"},
     {"exit", c_exit, "exit", "leave CalcIDE (back to the PicoCalc launcher)"},
     {"bye", c_bye, "bye", "say goodbye and power off"},
@@ -1339,8 +1396,8 @@ static const Cmd cmds[] = {
     {"more", c_cat, "more FILE", "print a file a screen at a time"},
     {"touch", c_touch, "touch FILE", "create an empty file"},
     {"hex", c_hex, "hex FILE", "hex dump of a file"},
-    {"edit", c_edit, "edit [FILE]", "open the editor"},
-    {"ed", c_edit, "ed [FILE]", "same as edit"},
+    {"edit", c_edit, "edit [FILE...]", "open the editor (several files open as tabs)"},
+    {"ed", c_edit, "ed [FILE...]", "same as edit"},
     {"cc", c_cc, "cc FILE.c [-o OUT] [-v]", "compile C to bytecode (.cbc)"},
     {"run", c_run, "run PROG [ARGS]", "run a .cbc (compiles a .c first)"},
     {"install", c_install, "install [-f]", "write examples and compiler source to the SD card"},
@@ -1435,9 +1492,9 @@ static int dispatch(char *line, int depth)
             int isdir = 0;
             size_t l = strlen(tries[t]);
             if (l < 4 || strcasecmp(tries[t] + l - 4, ".cbc")) continue;
-            if (vfs_resolve(tries[t], p) && vfs_stat(p, &isdir, 0) && !isdir) return vm_run_file(p, argc, argv);
+            if (vfs_resolve(tries[t], p) && vfs_stat(p, &isdir, 0) && !isdir) return run_program(p, argc, argv);
             snprintf(p, sizeof p, "/bin/%s", vfs_basename(tries[t]));
-            if (vfs_stat(p, &isdir, 0) && !isdir) return vm_run_file(p, argc, argv);
+            if (vfs_stat(p, &isdir, 0) && !isdir) return run_program(p, argc, argv);
         }
     }
     color_msg(9, "unknown command: %s (try 'help')\n", argv[0]);

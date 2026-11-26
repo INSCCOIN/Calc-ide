@@ -1,0 +1,19 @@
+set auto_close 1
+set max_files 2
+set show_stats 1
+edit /a.c /b.c /c.c
+int main(void) {
+printf("hi\n");
+return 0;[18~int x;cat /a.c
+run /a.c
+cat /b.c
+set show_stats 0
+----
+2 files open (max_files = 2)
+int main(void) {
+    printf("hi\n");
+    return 0;
+}
+hi
+instr,
+int x;

@@ -36,13 +36,15 @@ typedef uint16_t cell_t;
 void     hal_init(void);
 void     hal_reconfigure(void);         /* after /CalcIDE.conf is read */
 int      hal_safe_mode(void);           /* Esc held at power-on */
+int      hal_batch(void);               /* scripted host run (tests) */
 uint32_t hal_millis(void);
 uint64_t hal_micros(void);
 void     hal_sleep_ms(int ms);
 
 int  hal_key(void);                     /* -1 if nothing is waiting */
-/* drain the keyboard: 1 if Ctrl+C / BREAK was pressed; other keys go to queue() */
-int  hal_poll_break(void (*queue)(int key));
+/* drain the keyboard: 1 if a break key was pressed; other keys go to queue() */
+int  hal_poll_break(int (*is_break)(int key), void (*queue)(int key));
+void hal_blit(int x, int y, int w, int h, const uint16_t *px);  /* RGB565 pixels */
 int  hal_modifiers(void);
 
 /* draw one text row; cursor_col < 0 means no cursor on this row */

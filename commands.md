@@ -40,7 +40,9 @@ If a word isn't a command or an alias, CalcIDE looks for a program with that nam
 | `uptime` | Time since boot. |
 | `version`, `ver` | CalcIDE and compiler version, chip and build date. |
 | `temp` | The RP2350's (or RP2040's) internal temperature sensor, in °C and °F. |
-| `clock [MHZ]` | Show the CPU clock. With a number, set it (48–300 on RP2350, saved as `cpu_mhz`; 0 restores the default). Hold Esc at power-on to skip a bad setting. |
+| `clock [MHZ]` | Show the CPU clock and the three clock settings. With a number, set the base clock (48–300 on RP2350, saved as `cpu_mhz`; 0 restores the chip's default). Hold Esc at power-on to skip a bad setting. |
+| `clock idle MHZ` | The clock at the prompt and in the editor (`cpu_mhz_idle`; 0 = the base clock). |
+| `clock run MHZ` | The clock while compiling and running programs (`cpu_mhz_run`; 0 = the base clock). |
 | `backlight [N] [KBD]` | Screen backlight 0–255, and optionally the keyboard backlight. Saved. |
 | `exit` | Leave CalcIDE. The Pico restarts, which with the PicoCalc SD boot launcher installed lands back in its menu. A stand-alone install just restarts CalcIDE. |
 | `bye` | Say goodbye and power off. |
@@ -120,7 +122,7 @@ CPU clock: 150.000 MHz
 
 | Command | What it does |
 |---|---|
-| `edit [FILE]`, `ed` | Open the editor (see the README for its keys). F5 inside it compiles and runs. |
+| `edit [FILE...]`, `ed` | Open the editor (see the README for its keys). Several files open as tabs: F6/F7 switch, Ctrl+W closes. F5 inside it compiles and runs. |
 | `cc FILE.c` | Compile to `FILE.cbc` next to the source. Errors show `file:line: error: message`. |
 | `cc FILE.c -o OUT.cbc [-v]` | Choose the output; `-v` prints sizes and the compiler's memory use. |
 | `run FILE.c [ARGS]` | Compile, then run. |
@@ -129,7 +131,25 @@ CPU clock: 150.000 MHz
 | `NAME [ARGS]` | Run `NAME.cbc` from the current directory or `/bin`. |
 | `install [-f]` | Write the examples to `/calcide/examples`, the compiler source to `/calcide/cc`, and create `/bin`. Existing files are kept unless you give `-f`. |
 
-A program that ends with a non-zero code shows `[exit code N]`. A runtime error shows what happened and where:
+A program that ends with a non-zero code shows `[exit code N]`. With `set show_stats 1`, every program ends with a summary instead:
+
+```
+[48211 instr, 12 ms, heap 3 KB, stack 152 B, exit 0]
+```
+
+A compile error shows the line with a caret under the problem. Up to 10 errors are reported at once:
+
+```
+multi.c:3:13: error: expected ';' at the end of the line
+    3|     int x = 1
+     |             ^
+multi.c:5:12: error: expected expression
+    5|     x = y +;
+     |            ^
+2 errors
+```
+
+A runtime error shows what happened and where:
 
 ```
 Runtime error: division by zero
@@ -210,4 +230,9 @@ The keys are listed in the README under *Settings: CalcIDE.conf*. Some examples:
 /> set autoexec ex
 /> set prompt $p$g
 /> set vm_mem_kb 128
+/> set break_key esc
+/> set splash_image /pics/boot.bmp
+/> set splash_ms 5000
+/> set max_files 6
+/> set show_stats 1
 ```

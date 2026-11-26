@@ -46,6 +46,7 @@ add_executable(calcide
     src/vfs_common.c
     src/pf.c
     src/vm.c
+    src/splash.c
     src/ccport.c
     cc/cc.c
     platform/picocalc/hal_picocalc.c
@@ -110,6 +111,6 @@ endif()
 pico_enable_stdio_usb(calcide 1)
 pico_enable_stdio_uart(calcide 0)
 pico_set_program_name(calcide "CalcIDE")
-pico_set_program_version(calcide "0.1")
+pico_set_program_version(calcide "0.2")
 pico_set_program_description(calcide "On-device C IDE for the ClockworkPi PicoCalc")
 pico_add_extra_outputs(calcide)

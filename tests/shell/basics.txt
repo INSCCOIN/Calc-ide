@@ -30,7 +30,7 @@ bogus
 width 64
 set tabsize 2
 ----
-CalcIDE 0.1 - on-device C IDE for the PicoCalc
+CalcIDE 0.2 - on-device C IDE for the PicoCalc
 Hello from CalcIDE on the PicoCalc!
 1229 primes below 10000
 total      4.90

@@ -45,10 +45,13 @@ static void restore(void)
 }
 
 int hal_is_batch(void) { return batch; }
+int hal_batch(void) { return batch; }
 void hal_reconfigure(void) { }
-int hal_safe_mode(void) { return 0; }
+/* scripted runs skip the boot screen (it would eat the first key) */
+int hal_safe_mode(void) { return batch && !getenv("CALCIDE_SPLASH"); }
 
 static void grid_dump(void);
+static void fb_dump(void);
 static void at_exit_grid(void) { grid_dump(); }
 
 void hal_init(void)
@@ -70,6 +73,7 @@ void hal_init(void)
         fputs("\033[2J\033[?25l", stdout);
     }
     if (getenv("CALCIDE_GRID")) atexit(at_exit_grid);
+    if (getenv("CALCIDE_FB")) atexit(fb_dump);
     pf_path = getenv("CALCIDE_PF");
     if (!pf_path) pf_path = "pagefile.bin";
     pf_mem = (uint8_t *)malloc(PF_PAGES * PF_PSIZE);
@@ -168,15 +172,21 @@ int hal_key(void)
 
 int hal_modifiers(void) { return 0; }
 
-int hal_poll_break(void (*queue)(int key))
+int hal_poll_break(int (*is_break)(int key), void (*queue)(int key))
 {
     int k;
-    if (batch) return eof_seen ? 0 : 0;   /* scripted input is only read on demand */
+    if (batch) return 0;   /* scripted input is only read on demand */
     while ((k = hal_key()) >= 0) {
-        if (k == KEY_BREAK || k == KEY_CTRL('c')) return 1;
+        if (is_break(k)) return 1;
         queue(k);
     }
     return 0;
+}
+
+void hal_blit(int x, int y, int w, int h, const uint16_t *px)
+{
+    int i, j;
+    for (j = 0; j < h; j++) for (i = 0; i < w; i++) hal_pixel(x + i, y + j, px[j * w + i]);
 }
 
 int hal_eof(void) { return eof_seen; }
@@ -256,8 +266,25 @@ void hal_draw_row(int row, const cell_t *cells, int cols, int cursor_col, int st
 }
 
 void hal_set_font(int f) { font = f; }
-void hal_pixel(int x, int y, uint16_t c) { (void)x; (void)y; (void)c; }
-void hal_fill(int x, int y, int w, int h, uint16_t c) { (void)x; (void)y; (void)w; (void)h; (void)c; }
+/* a framebuffer for the pixel calls; CALCIDE_FB=FILE dumps it at exit
+ * (raw RGB565, 320x320) so tests can check what was drawn */
+static uint16_t fb[LCD_H][LCD_W];
+
+static void fb_dump(void)
+{
+    const char *p = getenv("CALCIDE_FB");
+    FILE *f;
+    if (!p || !(f = fopen(p, "wb"))) return;
+    fwrite(fb, sizeof fb, 1, f);
+    fclose(f);
+}
+
+void hal_pixel(int x, int y, uint16_t c) { if (x >= 0 && y >= 0 && x < LCD_W && y < LCD_H) fb[y][x] = c; }
+void hal_fill(int x, int y, int w, int h, uint16_t c)
+{
+    int i, j;
+    for (j = y; j < y + h; j++) for (i = x; i < x + w; i++) hal_pixel(i, j, c);
+}
 void hal_line(int x0, int y0, int x1, int y1, uint16_t c) { (void)x0; (void)y0; (void)x1; (void)y1; (void)c; }
 
 void hal_serial_write(const char *s, int n)
@@ -278,7 +305,7 @@ void hal_backlight(int level) { (void)level; }
 void hal_kbdlight(int level) { (void)level; }
 int hal_battery(int *charging) { if (charging) *charging = 0; return 100; }
 int hal_cpu_khz(void) { return 150000; }
-int hal_set_cpu_mhz(int mhz) { (void)mhz; return 0; }
+int hal_set_cpu_mhz(int mhz) { (void)mhz; return 1; }
 float hal_temp_c(void) { return 27.0f; }
 size_t hal_ram_total(void) { return 520 * 1024; }
 size_t hal_ram_free(void) { return 400 * 1024; }

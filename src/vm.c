@@ -1162,10 +1162,22 @@ static int64_t vm_sys(VM *vm, int id, int32_t *a, int n)
             if (con_poll_break()) vm_fail(vm, "break");
             hal_sleep_ms(2);
         }
+        if (conf_is_break(k)) vm_fail(vm, "break");
         return k;
     }
-    case SYS_KBHIT: return con_kbhit();
-    case SYS_INKEY: return con_inkey();
+    case SYS_KBHIT: {
+        int k;
+        if (!con_kbhit()) return 0;
+        k = con_inkey();
+        if (conf_is_break(k)) vm_fail(vm, "break");
+        con_unget(k);
+        return 1;
+    }
+    case SYS_INKEY: {
+        int k = con_inkey();
+        if (k >= 0 && conf_is_break(k)) vm_fail(vm, "break");
+        return k;
+    }
     case SYS_BEEP:
         if (!g_conf.mute) {
             if (a[1] > 0) { hal_tone(a[0], 0); vm_delay(vm, a[1] > 10000 ? 10000 : a[1]); hal_tone_off(); }
@@ -1310,7 +1322,8 @@ static void vm_exec(VM *vm)
     uint32_t ua, ub;
     uint64_t la, lb;
 
-#define SYNC() do { vm->osp = osp; vm->pc = pc; vm->fp = fp; vm->sp = sp; vm->rec = rec; vm->lr = lr; vm->cur_op_pc = opc; } while (0)
+#define SYNC() do { vm->osp = osp; vm->pc = pc; vm->fp = fp; vm->sp = sp; vm->rec = rec; vm->lr = lr; vm->cur_op_pc = opc; \
+                     vm->icount += 4096 - budget; budget = 4096; } while (0)
 #define LOAD() do { osp = vm->osp; pc = vm->pc; fp = vm->fp; sp = vm->sp; rec = vm->rec; lr = vm->lr; } while (0)
 
 #if !defined(__GNUC__)
