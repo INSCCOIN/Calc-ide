@@ -105,7 +105,7 @@ def main():
             script, _, expected = text.partition("\n----\n")
             sw = os.path.join(work, "sh_" + name)
             os.makedirs(sw, exist_ok=True)
-            rc, out, err = run([IDE], sw, inp=script.encode())
+            rc, out, err = run([IDE], sw, {"CALCIDE_SCREEN": "1"}, inp=script.encode())
             missing = [l for l in expected.strip().splitlines() if l.strip() and l.strip() not in out]
             report(not missing, "shell/" + name, "missing: %r\n--- output\n%s" % (missing, out + err))
 

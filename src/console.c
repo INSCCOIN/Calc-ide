@@ -402,12 +402,15 @@ int con_poll_break(void)
     return hal_poll_break(kq_push);
 }
 
+void hal_dump_screen(void) __attribute__((weak));
+
 int con_getkey(void)
 {
     int k;
     blink_phase = 1;
     blink_t = hal_millis();
     con_flush();
+    if (place_y >= 0 && hal_dump_screen) hal_dump_screen();
     for (;;) {
         k = con_inkey();
         if (k >= 0) {

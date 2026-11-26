@@ -87,6 +87,26 @@ target_link_libraries(calcide
     hardware_watchdog
 )
 
+# -DCALCIDE_SDBOOT=ON: a .bin for the PicoCalc SD boot launcher
+# (clockworkpi/PicoCalc Code/pico_multi_booter), which runs applications
+# linked 200 KB into flash. 'exit' then restarts back into the launcher.
+option(CALCIDE_SDBOOT "Build for the PicoCalc SD boot launcher" OFF)
+if (CALCIDE_SDBOOT)
+    if (PICO_PLATFORM MATCHES "rp2350")
+        set(_ld ${PICO_SDK_PATH}/src/rp2_common/pico_crt0/rp2350/memmap_default.ld)
+        set(_flash 4096k)
+    else()
+        set(_ld ${PICO_SDK_PATH}/src/rp2_common/pico_crt0/rp2040/memmap_default.ld)
+        set(_flash 2048k)
+    endif()
+    file(READ ${_ld} _ldtext)
+    string(REPLACE "INCLUDE \"pico_flash_region.ld\""
+           "FLASH(rx) : ORIGIN = 0x10000000 + 200k, LENGTH = ${_flash} - 200k" _ldtext "${_ldtext}")
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/memmap_sdboot.ld "${_ldtext}")
+    pico_set_linker_script(calcide ${CMAKE_CURRENT_BINARY_DIR}/memmap_sdboot.ld)
+    target_compile_definitions(calcide PRIVATE CALCIDE_SDBOOT=1)
+endif()
+
 pico_enable_stdio_usb(calcide 1)
 pico_enable_stdio_uart(calcide 0)
 pico_set_program_name(calcide "CalcIDE")

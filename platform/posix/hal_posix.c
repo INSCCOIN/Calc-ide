@@ -184,13 +184,40 @@ int hal_eof(void) { return eof_seen; }
 static const int ansi_fg[16] = {30, 31, 32, 33, 34, 35, 36, 37, 90, 91, 92, 93, 94, 95, 96, 97};
 static const int ansi_bg[16] = {40, 41, 42, 43, 44, 45, 46, 47, 100, 101, 102, 103, 104, 105, 106, 107};
 
+/* batch mode keeps a copy of the screen text; CALCIDE_SCREEN=1 prints it
+ * whenever the editor waits for a key after drawing (used by the tests) */
+static char shadow[CON_ROWS][CON_MAXCOLS + 1];
+static int shadow_dirty;
+
+void hal_dump_screen(void)
+{
+    int r;
+    if (!shadow_dirty || !getenv("CALCIDE_SCREEN")) return;
+    shadow_dirty = 0;
+    fputs("\n=== screen ===\n", stdout);
+    for (r = 0; r < CON_ROWS; r++) {
+        int e = (int)strlen(shadow[r]);
+        while (e > 0 && shadow[r][e - 1] == ' ') e--;
+        printf("|%.*s\n", e, shadow[r]);
+    }
+    fputs("=== end ===\n", stdout);
+}
+
 void hal_draw_row(int row, const cell_t *cells, int cols, int cursor_col, int style)
 {
     int c, last = -1;
     char buf[CON_MAXCOLS * 24 + 64];
     int n = 0;
     (void)style;
-    if (batch) return;
+    if (batch) {
+        for (c = 0; c < cols; c++) {
+            int ch = cells[c] & 0xFF;
+            shadow[row][c] = (char)(ch >= 32 && ch < 127 ? ch : '#');
+        }
+        shadow[row][cols] = 0;
+        shadow_dirty = 1;
+        return;
+    }
     n += sprintf(buf + n, "\033[%d;1H", row + 1);
     for (c = 0; c < cols; c++) {
         int a = cells[c] >> 8, ch = cells[c] & 0xFF;

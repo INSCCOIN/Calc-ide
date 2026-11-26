@@ -337,7 +337,7 @@ static void draw(void)
     for (row = 0; row < TEXT_ROWS; row++) {
         int y = TOP_ROW + row;
         if (g) {
-            char num[8];
+            char num[16];
             if (p >= 0) snprintf(num, sizeof num, "%*d ", g - 1, E.top_line + row + 1);
             else snprintf(num, sizeof num, "%*s ", g - 1, "~");
             con_text_at(0, y, num, ATTR(g_conf.ed_lnum, g_conf.ed_bg), g);

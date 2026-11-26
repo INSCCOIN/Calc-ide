@@ -493,6 +493,14 @@ static int c_bye(int argc, char **argv)
     return 0;
 }
 
+static int c_bootsel(int argc, char **argv)
+{
+    con_puts("Rebooting into the USB bootloader (drop a .uf2 on the RP2350/RPI-RP2 drive)...\n");
+    vfs_sync();
+    hal_reboot_to_bootloader();
+    return 0;
+}
+
 static int c_history(int argc, char **argv)
 {
     int i;
@@ -1273,6 +1281,7 @@ static const Cmd cmds[] = {
     {"backlight", c_backlight, "backlight [0-255] [KBD]", "screen and keyboard backlight"},
     {"exit", c_exit, "exit", "leave CalcIDE (back to the PicoCalc launcher)"},
     {"bye", c_bye, "bye", "say goodbye and power off"},
+    {"bootsel", c_bootsel, "bootsel", "reboot into the USB bootloader to flash new firmware"},
     {"history", c_history, "history [-c]", "command history (!N or !! repeats)"},
     {"alias", c_alias, "alias [NAME=CMD]", "list or define aliases (saved)"},
     {"unalias", c_unalias, "unalias NAME", "remove an alias"},
