@@ -37,7 +37,7 @@ Everything else is new: the Tiny-C compiler, the bytecode VM, the shell, the edi
 play T128 IPLS L8 [E5 G5 A5 G5]x2 | ITRI V9 A2/2 F2/2 | [K HH SN HH]x2
 ```
 
-`install` puts six songs in `/calcide/songs/`:
+`install` puts eleven songs in `/calcide/songs/`:
 
 | Song | What it tests |
 |---|---|
@@ -47,6 +47,11 @@ play T128 IPLS L8 [E5 G5 A5 G5]x2 | ITRI V9 A2/2 F2/2 | [K HH SN HH]x2
 | `furelise.song` | Für Elise: two triangle-wave "hands" |
 | `canon.song` | Pachelbel's Canon: three voices entering one by one |
 | `chiptune.song` | an original 4-channel chiptune with arpeggios |
+| `lavalamp.song` | *Lava Lamp Dream*: a 70s psychedelic E dorian vamp with organ and saw-wave lead (1:20) |
+| `tangerine.song` | *Tangerine Sitar*: a raga in D phrygian dominant over a drone, with tom "tabla" (1:18) |
+| `velvetfuzz.song` | *Velvet Fuzz*: a heavy A minor riff, organ verse and a pentatonic solo (1:20) |
+| `caravan.song` | *Cosmic Caravan*: a G mixolydian groove with sine "flute" and wah stabs (1:23) |
+| `mandala.song` | *Electric Mandala*: F lydian; it floats, builds into a groove, then drifts away (1:20) |
 
 `tools/songcheck.py` checks that a song's channels are all the same length. `examples/drums.c` plays melody, bass and drums from C.
 

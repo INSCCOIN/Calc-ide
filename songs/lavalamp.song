@@ -1,0 +1,22 @@
+# Lava Lamp Dream - slow E dorian vamp, swirling organ, saw-wave lead
+# 1: lead   2: organ arpeggio   3: bass   4: drums
+T96
+1: ISAW V5
+1: [R/1]x4
+1: [B4/4. A4/8 G4/4 E4/4   F#4/4 A4/4 C#5/2
+1:  B4/8 D5/8 E5/4 D5/8 B4/8 A4/4   C#5/2. R/4]x2
+1: [E5/16 F#5/16 G5/16 A5/16 B5/8 A5/8 G5/16 F#5/16 E5/16 D5/16 E5/4
+1:  C#5/16 D5/16 E5/16 F#5/16 A5/8 F#5/8 E5/16 D5/16 C#5/16 B4/16 A4/4]x2
+1: B5/2 A5/8 G5/8 F#5/4   E5/4. D5/8 C#5/2
+1: B4/8 D5/8 E5/8 G5/8 A5/8 B5/8 D6/4   E6/1
+1: B4/4. A4/8 G4/4 E4/4   F#4/4 A4/4 C#5/2
+1: B4/8 D5/8 E5/4 D5/8 B4/8 A4/4   C#5/2. R/4
+1: E5/1 D5/1 B4/1 C#5/1 E4/1 R/1 R/1 R/1
+2: ISQ V3 L8
+2: [E4 G4 B4 D5 B4 G4 E4 G4  A3 C#4 E4 A4 E4 C#4 A3 E4]x16
+3: ITRI V9
+3: [E2/4. E2/8 B2/4 D3/4  A2/4. A2/8 E3/4 C#3/4]x16
+4: V6 [HH/8 HH/8 HH/8 OH/8]x8
+4: [K/4 HH/8 HH/8 SN/4 HH/8 OH/8]x26
+4: TH/16 TH/16 TH/16 TH/16 TL/16 TL/16 TL/16 TL/16 SN/16 SN/16 SN/16 SN/16 K/8 K/8
+4: CY/1

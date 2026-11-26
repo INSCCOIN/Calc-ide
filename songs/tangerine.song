@@ -1,0 +1,21 @@
+# Tangerine Sitar - a raga in D phrygian dominant over a tanpura drone
+# 1: "sitar" (saw)   2: tanpura (sine)   3: drone (triangle)   4: "tabla" (toms)
+T110
+1: ISAW V5
+1: [R/1]x4
+1: D5/2 Eb5/4 D5/4   F#5/2. G5/4   A5/1   G5/8 F#5/8 Eb5/8 D5/8 Eb5/2
+1: D5/1   A4/2 Bb4/2   C5/4 Bb4/4 A4/2   D5/1
+1: [D5/16 Eb5/16 F#5/16 G5/16 A5/16 G5/16 F#5/16 Eb5/16 D5/8 A4/8 D5/4
+1:  A5/16 Bb5/16 A5/16 G5/16 F#5/16 G5/16 A5/16 Bb5/16 C6/8 Bb5/8 A5/4
+1:  G5/16 F#5/16 Eb5/16 D5/16 C5/16 D5/16 Eb5/16 F#5/16 G5/4 F#5/4
+1:  Eb5/8 D5/8 C5/8 Bb4/8 A4/2]x4
+1: [D5/8 Eb5/8 F#5/4 A5/4 R/4]x3 D6/4 R/4 A5/4 D5/4
+1: D5/1 A4/1 D5/1 R/1
+2: ISIN V4 L8
+2: [D4 A4 D5 A4 D4 A4 D5 F#4]x36
+3: ITRI V8
+3: [D2/1 A2/1]x18
+4: V5 [TL/4 R/4 TH/8 TH/8 R/4]x4
+4: [TL/8 TH/16 TH/16 TL/8 TH/8 TL/16 TL/16 TH/8 CP/8 TH/8]x30
+4: [TL/16]x8 [TH/16]x8
+4: CY/1
