@@ -37,11 +37,14 @@ Everything else is new: the Tiny-C compiler, the bytecode VM, the shell, the edi
 play T128 IPLS L8 [E5 G5 A5 G5]x2 | ITRI V9 A2/2 F2/2 | [K HH SN HH]x2
 ```
 
-`install` puts eleven songs in `/calcide/songs/`:
+**[SONGS.md](SONGS.md) is the full guide to playing and writing songs**, with a step-by-step song-writing demo and a C demo (`jukebox.c`).
+
+`install` puts twelve songs in `/calcide/songs/`:
 
 | Song | What it tests |
 |---|---|
 | `demo.song` | every instrument, then every drum (start here) |
+| `sunrise.song` | the tutorial song built step by step in SONGS.md (0:36) |
 | `beat.song` | drums only: rock, funk, claps, a tom fill |
 | `ode.song` | Ode to Joy: melody, bass and drums |
 | `furelise.song` | Für Elise: two triangle-wave "hands" |
@@ -53,7 +56,7 @@ play T128 IPLS L8 [E5 G5 A5 G5]x2 | ITRI V9 A2/2 F2/2 | [K HH SN HH]x2
 | `caravan.song` | *Cosmic Caravan*: a G mixolydian groove with sine "flute" and wah stabs (1:23) |
 | `mandala.song` | *Electric Mandala*: F lydian; it floats, builds into a groove, then drifts away (1:20) |
 
-`tools/songcheck.py` checks that a song's channels are all the same length. `examples/drums.c` plays melody, bass and drums from C.
+`tools/songcheck.py` checks that a song's channels are all the same length. `examples/drums.c` plays melody, bass and drums from C, and `examples/jukebox.c` builds tunes at run time, turns the keyboard into a drum pad and plays song files from a menu.
 
 ## New in 0.3
 
@@ -90,7 +93,7 @@ play T128 IPLS L8 [E5 G5 A5 G5]x2 | ITRI V9 A2/2 F2/2 | [K HH SN HH]x2
 - [Troubleshooting](#troubleshooting)
 - [Project layout](#project-layout)
 
-The full command reference is in **[commands.md](commands.md)**. The C dialect, built-in library and VM are covered in **[compiler.md](compiler.md)**.
+The full command reference is in **[commands.md](commands.md)**. The C dialect, built-in library and VM are covered in **[compiler.md](compiler.md)**. Playing and writing music is covered in **[SONGS.md](SONGS.md)**.
 
 ## What's in it
 
@@ -353,6 +356,7 @@ platform/
   posix/       a terminal build for development and tests
 lib/fatfs/     FatFs R0.16
 examples/      example programs (also built into the firmware for 'install')
+songs/         .song files (also built in; see SONGS.md)
 tests/         test programs, error cases, shell scripts, the FatFs image test
 tools/         embed.py, make_fonts.py, cbcdis.py (disassembler), screenshot.py
 docs/          screenshots

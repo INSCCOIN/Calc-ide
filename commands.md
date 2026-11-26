@@ -206,7 +206,7 @@ page file: 768 KB (192 pages of 4 KB)
 
 ### The synthesizer
 
-Up to four channels play at once, separated by `|`, and they are mixed at 16 kHz.
+Up to four channels play at once, separated by `|`, and they are mixed at 16 kHz. [SONGS.md](SONGS.md) is a full tutorial on writing songs and playing them from C.
 
 | Token | Meaning |
 |---|---|
