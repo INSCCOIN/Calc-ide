@@ -1,0 +1,7 @@
+build/
+build-host/
+build-*/
+sdroot/
+pagefile.bin
+*.cbc
+__pycache__/
