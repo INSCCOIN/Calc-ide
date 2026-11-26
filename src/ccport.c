@@ -106,9 +106,24 @@ void cc_exit(int code)
     longjmp(cc_jb, 1);
 }
 
-float cc_atof(const char *s)
+double cc_atof(const char *s)
 {
-    return strtof(s, 0);
+    return strtod(s, 0);
+}
+
+float cc_strtof(const char *s, char **end)
+{
+    return strtof(s, end);
+}
+
+int cc_sprintf(char *buf, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+    va_start(ap, fmt);
+    n = vsprintf(buf, fmt, ap);
+    va_end(ap);
+    return n;
 }
 
 static void cc_cleanup(void)

@@ -12,7 +12,7 @@
 #define CALCIDE_OPS_H
 
 #define CBC_MAGIC     0x31434243   /* "CBC1" */
-#define CBC_VERSION   1
+#define CBC_VERSION   2
 #define CBC_DATA_BASE 64           /* first data address; below is a NULL trap */
 
 #define OP_HALT    0
@@ -81,20 +81,88 @@
 #define OP_JNZ     63  /* a32 */
 #define OP_CALL    64  /* a32 */
 #define OP_CALLI   65  /* n8 : target sits below the n arguments */
-#define OP_ENTER   66  /* n8 nparams, i32 frame size */
+#define OP_ENTER   66  /* n8 parameter cells, i32 frame size */
 #define OP_RET     67  /* returns 0 */
 #define OP_RETV    68  /* returns top of stack */
 #define OP_POP     69
 #define OP_DUP     70
 #define OP_SWAP    71
 #define OP_MEMCPY  72  /* i32 n : pop src, pop dst, copy, push dst */
-#define OP_SYS     73  /* i16 id, n8 nargs : builtin call, pushes result */
+#define OP_SYS     73  /* i16 id (| 0x8000: returns 2 cells), n8 arg cells */
 #define OP_INC     74  /* m8 mode, i32 delta : pop addr, push old/new */
 #define OP_LLW     75  /* i16 : push word at fp + off */
 #define OP_MEMSET  76  /* i32 n : pop addr, zero n bytes */
 #define OP_ADDI    77  /* i32 : top += imm */
 #define OP_LGW     78  /* i32 : push word at absolute address */
-#define OP_LAST    79
+/* 64-bit values (long long, double) occupy two cells: low word, then high
+ * word on top. */
+#define OP_LDD     79  /* load 8 bytes */
+#define OP_STD     80  /* [addr lo hi] -> store, leaves [lo hi] */
+#define OP_LADD    81
+#define OP_LSUB    82
+#define OP_LMUL    83
+#define OP_LDIV    84
+#define OP_LMOD    85
+#define OP_LDIVU   86
+#define OP_LMODU   87
+#define OP_LAND    88
+#define OP_LOR     89
+#define OP_LXOR    90
+#define OP_LSHL    91  /* [lo hi n] */
+#define OP_LSHR    92
+#define OP_LSAR    93
+#define OP_LNEG    94
+#define OP_LCOM    95  /* bitwise not */
+#define OP_LEQ     96  /* 64-bit compares leave one int cell */
+#define OP_LNE     97
+#define OP_LLT     98
+#define OP_LLE     99
+#define OP_LGT     100
+#define OP_LGE     101
+#define OP_LLTU    102
+#define OP_LLEU    103
+#define OP_LGTU    104
+#define OP_LGEU    105
+#define OP_DADD    106
+#define OP_DSUB    107
+#define OP_DMUL    108
+#define OP_DDIV    109
+#define OP_DNEG    110
+#define OP_DEQ     111
+#define OP_DNE     112
+#define OP_DLT     113
+#define OP_DLE     114
+#define OP_DGT     115
+#define OP_DGE     116
+#define OP_I2L     117  /* conversions */
+#define OP_U2L     118
+#define OP_L2I     119
+#define OP_I2D     120
+#define OP_U2D     121
+#define OP_L2D     122
+#define OP_UL2D    123
+#define OP_F2D     124
+#define OP_D2F     125
+#define OP_D2I     126
+#define OP_D2U     127
+#define OP_D2L     128
+#define OP_D2UL    129
+#define OP_L2B     130  /* 64-bit value != 0 -> int */
+#define OP_D2B     131
+#define OP_CVTU    132  /* op8 n8 : apply conversion op to the value under n cells */
+#define OP_ENTERV  133  /* n8 fixed cells, i32 frame size; variadic: count cell on top */
+#define OP_VASTART 134  /* push the address of the variadic arguments */
+#define OP_STWP    135  /* store and pop: [addr val] -> [] */
+#define OP_STBP    136
+#define OP_STHP    137
+#define OP_STDP    138
+#define OP_JEQ     139  /* a32 : fused compare and branch (pop 2) */
+#define OP_JNE     140
+#define OP_JLT     141
+#define OP_JLE     142
+#define OP_JGT     143
+#define OP_JGE     144
+#define OP_LAST    145
 
 /* OP_INC mode byte: low 3 bits = width kind, bit 3 = postfix */
 #define INC_B      0
@@ -103,6 +171,8 @@
 #define INC_HU     3
 #define INC_W      4
 #define INC_F      5
+#define INC_L      6   /* 64-bit integer */
+#define INC_D      7   /* double */
 #define INC_POST   8
 
 #endif

@@ -307,13 +307,32 @@ static void out_put(Out *o, const char *s, int n)
     }
 }
 
+static inline double u2d(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
+static inline uint64_t d2u(double d) { uint64_t u; memcpy(&u, &d, 8); return u; }
+
+/* Arguments arrive as 32-bit cells; double and long long take two (low
+ * word first), exactly as C's default argument promotions lay them out. */
+static int32_t arg1(const int32_t *args, int nargs, int *ai)
+{
+    int32_t v = *ai < nargs ? args[*ai] : 0;
+    (*ai)++;
+    return v;
+}
+
+static uint64_t arg2(const int32_t *args, int nargs, int *ai)
+{
+    uint64_t lo = (uint32_t)arg1(args, nargs, ai);
+    uint64_t hi = (uint32_t)arg1(args, nargs, ai);
+    return lo | (hi << 32);
+}
+
 static int vm_format(VM *vm, Out *o, const char *fmt, const int32_t *args, int nargs)
 {
     int ai = 0;
-    char spec[32], tmp[96];
+    char spec[40], tmp[400];
     while (*fmt) {
         const char *pct;
-        int n, si;
+        int n, si, nl = 0;
         char conv;
         int width_star = 0, prec_star = 0, wv = 0, pv = 0;
         if (*fmt != '%') {
@@ -335,74 +354,88 @@ static int vm_format(VM *vm, Out *o, const char *fmt, const int32_t *args, int n
             if (*fmt == '*') { prec_star = 1; fmt++; spec[si++] = '*'; }
             else while (isdigit((unsigned char)*fmt) && si < 24) spec[si++] = *fmt++;
         }
-        while (*fmt == 'l' || *fmt == 'h' || *fmt == 'z' || *fmt == 'j' || *fmt == 't' || *fmt == 'L') fmt++;
+        while (*fmt == 'l' || *fmt == 'h' || *fmt == 'z' || *fmt == 'j' || *fmt == 't' || *fmt == 'L' || *fmt == 'q') {
+            if (*fmt == 'l' || *fmt == 'q') nl++;
+            if (*fmt == 'j' || *fmt == 'q') nl = 2;
+            fmt++;
+        }
         conv = *fmt;
+        spec[si] = 0;
         if (!conv) { out_put(o, pct, (int)strlen(pct)); break; }
         fmt++;
-        spec[si] = 0;
-        if (width_star) wv = ai < nargs ? args[ai++] : 0;
-        if (prec_star) pv = ai < nargs ? args[ai++] : 0;
-        {
-            int32_t a = ai < nargs ? args[ai] : 0;
-            ai++;
-            switch (conv) {
-            case 'd': case 'i': case 'c':
+        if (width_star) wv = arg1(args, nargs, &ai);
+        if (prec_star) pv = arg1(args, nargs, &ai);
+#define FMT1(v) (width_star && prec_star ? snprintf(tmp, sizeof tmp, spec, wv, pv, v) \
+               : width_star ? snprintf(tmp, sizeof tmp, spec, wv, v) \
+               : prec_star ? snprintf(tmp, sizeof tmp, spec, pv, v) : snprintf(tmp, sizeof tmp, spec, v))
+        switch (conv) {
+        case 'd': case 'i': case 'u': case 'x': case 'X': case 'o': {
+            if (nl >= 2) {
+                uint64_t v = arg2(args, nargs, &ai);
+                spec[si++] = 'l'; spec[si++] = 'l'; spec[si++] = conv; spec[si] = 0;
+                if (conv == 'd' || conv == 'i') n = FMT1((long long)v);
+                else n = FMT1((unsigned long long)v);
+            } else {
+                int32_t v = arg1(args, nargs, &ai);
                 spec[si++] = conv; spec[si] = 0;
-                if (width_star && prec_star) n = snprintf(tmp, sizeof tmp, spec, wv, pv, (int)a);
-                else if (width_star) n = snprintf(tmp, sizeof tmp, spec, wv, (int)a);
-                else if (prec_star) n = snprintf(tmp, sizeof tmp, spec, pv, (int)a);
-                else n = snprintf(tmp, sizeof tmp, spec, (int)a);
-                if (conv == 'c' && a == 0) { out_put(o, "", 1); break; }
-                out_put(o, tmp, n < (int)sizeof tmp ? n : (int)sizeof tmp - 1);
-                break;
-            case 'u': case 'x': case 'X': case 'o':
-                spec[si++] = conv; spec[si] = 0;
-                if (width_star && prec_star) n = snprintf(tmp, sizeof tmp, spec, wv, pv, (unsigned)a);
-                else if (width_star) n = snprintf(tmp, sizeof tmp, spec, wv, (unsigned)a);
-                else if (prec_star) n = snprintf(tmp, sizeof tmp, spec, pv, (unsigned)a);
-                else n = snprintf(tmp, sizeof tmp, spec, (unsigned)a);
-                out_put(o, tmp, n < (int)sizeof tmp ? n : (int)sizeof tmp - 1);
-                break;
-            case 'p':
-                n = snprintf(tmp, sizeof tmp, "0x%x", (unsigned)a);
-                out_put(o, tmp, n);
-                break;
-            case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': {
-                double d = i2f(a);
-                spec[si++] = conv; spec[si] = 0;
-                if (width_star && prec_star) n = snprintf(tmp, sizeof tmp, spec, wv, pv, d);
-                else if (width_star) n = snprintf(tmp, sizeof tmp, spec, wv, d);
-                else if (prec_star) n = snprintf(tmp, sizeof tmp, spec, pv, d);
-                else n = snprintf(tmp, sizeof tmp, spec, d);
-                out_put(o, tmp, n < (int)sizeof tmp ? n : (int)sizeof tmp - 1);
-                break;
+                if (conv == 'd' || conv == 'i') n = FMT1((int)v);
+                else n = FMT1((unsigned)v);
             }
-            case 's': {
-                const char *s = a ? vstr(vm, (uint32_t)a) : "(null)";
-                int len = (int)strlen(s);
-                int w = 0, p = -1, left = 0, k;
-                const char *q = spec + 1;
-                while (*q == '-' || *q == '+' || *q == ' ' || *q == '#' || *q == '0') { if (*q == '-') left = 1; q++; }
-                if (width_star) { w = wv; if (w < 0) { left = 1; w = -w; } }
-                else while (*q >= '0' && *q <= '9') w = w * 10 + (*q++ - '0');
-                if (*q == '*') q++;
-                if (*q == '.') {
-                    q++;
-                    if (prec_star) p = pv;
-                    else { p = 0; while (*q >= '0' && *q <= '9') p = p * 10 + (*q++ - '0'); }
-                }
-                if (p >= 0 && p < len) len = p;
-                if (!left) for (k = len; k < w; k++) out_put(o, " ", 1);
-                out_put(o, s, len);
-                if (left) for (k = len; k < w; k++) out_put(o, " ", 1);
-                break;
-            }
-            default:
-                out_put(o, pct, (int)(fmt - pct));
-                ai--;
-                break;
-            }
+            out_put(o, tmp, n < (int)sizeof tmp ? n : (int)sizeof tmp - 1);
+            break;
         }
+        case 'c': {
+            int32_t v = arg1(args, nargs, &ai);
+            spec[si++] = 'c'; spec[si] = 0;
+            n = FMT1((int)v);
+            if (v == 0) { out_put(o, "", 1); break; }
+            out_put(o, tmp, n < (int)sizeof tmp ? n : (int)sizeof tmp - 1);
+            break;
+        }
+        case 'p':
+            n = snprintf(tmp, sizeof tmp, "0x%x", (unsigned)arg1(args, nargs, &ai));
+            out_put(o, tmp, n);
+            break;
+        case 'f': case 'F': case 'e': case 'E': case 'g': case 'G': case 'a': case 'A': {
+            double d = u2d(arg2(args, nargs, &ai));
+            spec[si++] = conv; spec[si] = 0;
+            if (prec_star && pv > 60) pv = 60;
+            n = FMT1(d);
+            out_put(o, tmp, n < (int)sizeof tmp ? n : (int)sizeof tmp - 1);
+            break;
+        }
+        case 's': {
+            int32_t a = arg1(args, nargs, &ai);
+            const char *str = a ? vstr(vm, (uint32_t)a) : "(null)";
+            int len = (int)strlen(str);
+            int w = 0, p = -1, left = 0, k;
+            const char *q = spec + 1;
+            while (*q == '-' || *q == '+' || *q == ' ' || *q == '#' || *q == '0') { if (*q == '-') left = 1; q++; }
+            if (width_star) { w = wv; if (w < 0) { left = 1; w = -w; } }
+            else while (*q >= '0' && *q <= '9') w = w * 10 + (*q++ - '0');
+            if (*q == '*') q++;
+            if (*q == '.') {
+                q++;
+                if (prec_star) p = pv;
+                else { p = 0; while (*q >= '0' && *q <= '9') p = p * 10 + (*q++ - '0'); }
+            }
+            if (p >= 0 && p < len) len = p;
+            if (!left) for (k = len; k < w; k++) out_put(o, " ", 1);
+            out_put(o, str, len);
+            if (left) for (k = len; k < w; k++) out_put(o, " ", 1);
+            break;
+        }
+        case 'n': {
+            int32_t a = arg1(args, nargs, &ai);
+            int32_t v = o->len;
+            memcpy(vptr(vm, (uint32_t)a, 4), &v, 4);
+            break;
+        }
+        default:
+            out_put(o, pct, (int)(fmt - pct));
+            break;
+        }
+#undef FMT1
     }
     return o->len;
 }
@@ -476,7 +509,7 @@ static int vm_scan(VM *vm, ScanSrc *ss, const char *fmt, const int32_t *args, in
         }
         fmt++;
         {
-            int suppress = 0, width = 0;
+            int suppress = 0, width = 0, nl = 0;
             char conv;
             char buf[80];
             int n = 0;
@@ -488,7 +521,11 @@ static int vm_scan(VM *vm, ScanSrc *ss, const char *fmt, const int32_t *args, in
             }
             if (*fmt == '*') { suppress = 1; fmt++; }
             while (isdigit((unsigned char)*fmt)) width = width * 10 + (*fmt++ - '0');
-            while (*fmt == 'l' || *fmt == 'h' || *fmt == 'L') fmt++;
+            while (*fmt == 'l' || *fmt == 'h' || *fmt == 'L' || *fmt == 'q' || *fmt == 'j' || *fmt == 'z') {
+                if (*fmt == 'l' || *fmt == 'L' || *fmt == 'q') nl++;
+                if (*fmt == 'q' || *fmt == 'j') nl = 2;
+                fmt++;
+            }
             conv = *fmt++;
             if (!conv) break;
             if (width <= 0 || width > 78) width = 78;
@@ -539,7 +576,7 @@ static int vm_scan(VM *vm, ScanSrc *ss, const char *fmt, const int32_t *args, in
                 if (c < 0) break;
                 if (isalnum(c) || c == '.' || c == '-' || c == '+') {
                     if ((c == '-' || c == '+') && n > 0 && !(conv != 'x' && (buf[n - 1] == 'e' || buf[n - 1] == 'E'))) { sc_unget(ss, c); break; }
-                    if (conv != 'f' && conv != 'e' && conv != 'g' && c == '.') { sc_unget(ss, c); break; }
+                    if (conv != 'f' && conv != 'e' && conv != 'g' && conv != 'a' && c == '.') { sc_unget(ss, c); break; }
                     if ((conv == 'd' || conv == 'u') && !(isdigit(c) || c == '-' || c == '+')) { sc_unget(ss, c); break; }
                     buf[n++] = (char)c;
                 } else { sc_unget(ss, c); break; }
@@ -548,14 +585,15 @@ static int vm_scan(VM *vm, ScanSrc *ss, const char *fmt, const int32_t *args, in
             if (n == 0) return assigned ? assigned : (c < 0 ? -1 : assigned);
             if (!suppress && ai < nargs) {
                 uint32_t dst = (uint32_t)args[ai++];
-                int32_t v;
-                if (conv == 'f' || conv == 'e' || conv == 'g') v = f2i(strtof(buf, 0));
-                else if (conv == 'x' || conv == 'X') v = (int32_t)strtoul(buf, 0, 16);
-                else if (conv == 'o') v = (int32_t)strtoul(buf, 0, 8);
-                else if (conv == 'i') v = (int32_t)strtol(buf, 0, 0);
-                else if (conv == 'u') v = (int32_t)strtoul(buf, 0, 10);
-                else v = (int32_t)strtol(buf, 0, 10);
-                memcpy(vptr(vm, dst, 4), &v, 4);
+                if (conv == 'f' || conv == 'e' || conv == 'g' || conv == 'a') {
+                    if (nl) { double d = strtod(buf, 0); memcpy(vptr(vm, dst, 8), &d, 8); }
+                    else { float f = strtof(buf, 0); memcpy(vptr(vm, dst, 4), &f, 4); }
+                } else {
+                    int base = (conv == 'x' || conv == 'X') ? 16 : conv == 'o' ? 8 : conv == 'i' ? 0 : 10;
+                    long long v = (conv == 'd' || conv == 'i') ? strtoll(buf, 0, base) : (long long)strtoull(buf, 0, base);
+                    if (nl >= 2) memcpy(vptr(vm, dst, 8), &v, 8);
+                    else { int32_t w = (int32_t)v; memcpy(vptr(vm, dst, 4), &w, 4); }
+                }
                 assigned++;
             }
         }
@@ -694,6 +732,7 @@ enum {
     SYS_ISUPPER, SYS_ISLOWER, SYS_ISXDIGIT, SYS_ISPUNCT, SYS_ISPRINT,
     SYS_MALLOC = 70, SYS_CALLOC, SYS_REALLOC, SYS_FREE, SYS_ATOI, SYS_ATOF, SYS_STRTOL,
     SYS_ABS, SYS_RAND, SYS_SRAND, SYS_EXIT, SYS_ABORT, SYS_QSORT, SYS_HEAPFREE, SYS_ASSERT,
+    SYS_STRTOF = 85, SYS_STRTOD, SYS_ATOLL, SYS_STRTOLL, SYS_LLABS,
     SYS_SIN = 90, SYS_COS, SYS_TAN, SYS_ASIN, SYS_ACOS, SYS_ATAN, SYS_ATAN2, SYS_SQRT,
     SYS_POW, SYS_EXP, SYS_LOG, SYS_LOG10, SYS_FLOOR, SYS_CEIL, SYS_FABS, SYS_FMOD,
     SYS_ROUND, SYS_FMIN, SYS_FMAX,
@@ -703,6 +742,10 @@ enum {
     SYS_FILLRECT, SYS_RGB, SYS_CURSOR, SYS_PFREAD, SYS_PFWRITE, SYS_TIME, SYS_LINE,
     SYS_TEXTCOLOR, SYS_TEXTBG, SYS_CLOCK, SYS_REFRESH, SYS_CHARGING, SYS_SLEEP,
     SYS_CPUTEMP,
+    SYS_SINF = 160, SYS_COSF, SYS_TANF, SYS_ASINF, SYS_ACOSF, SYS_ATANF, SYS_ATAN2F, SYS_SQRTF,
+    SYS_POWF, SYS_EXPF, SYS_LOGF, SYS_LOG10F, SYS_FLOORF, SYS_CEILF, SYS_FABSF, SYS_FMODF,
+    SYS_ROUNDF, SYS_FMINF, SYS_FMAXF,
+    SYS_SETJMP = 180, SYS_LONGJMP, SYS_VPRINTF, SYS_VSPRINTF, SYS_VSNPRINTF, SYS_VFPRINTF,
     SYS_COUNT
 };
 
@@ -718,7 +761,21 @@ static void vm_delay(VM *vm, int ms)
     }
 }
 
-static int32_t vm_sys(VM *vm, int id, int32_t *a, int n)
+/* the cells of a va_list, copied out of VM memory */
+static int va_cells(VM *vm, uint32_t ap, int32_t *out, int max)
+{
+    uint32_t n;
+    if (ap < CBC_DATA_BASE || ap >= vm->mem_size) vm_fail(vm, "invalid va_list");
+    n = (vm->mem_size - ap) / 4;
+    if (n > (uint32_t)max) n = (uint32_t)max;
+    memcpy(out, vm->mem + ap, n * 4);
+    return (int)n;
+}
+
+#define ARGD(i) u2d(((uint64_t)(uint32_t)a[(i) + 1] << 32) | (uint32_t)a[i])
+#define RETD(x) return (int64_t)d2u(x)
+
+static int64_t vm_sys(VM *vm, int id, int32_t *a, int n)
 {
     char buf[128];
     switch (id) {
@@ -990,7 +1047,52 @@ static int32_t vm_sys(VM *vm, int id, int32_t *a, int n)
     case SYS_REALLOC: return a[1] < 0 ? 0 : (int32_t)vm_realloc(vm, (uint32_t)a[0], (uint32_t)a[1]);
     case SYS_FREE: vm_free(vm, (uint32_t)a[0]); return 0;
     case SYS_ATOI: return (int32_t)strtol(vstr(vm, a[0]), 0, 10);
-    case SYS_ATOF: return f2i(strtof(vstr(vm, a[0]), 0));
+    case SYS_ATOF: RETD(strtod(vstr(vm, a[0]), 0));
+    case SYS_STRTOF: case SYS_STRTOD: case SYS_STRTOLL: {
+        char *str = vstr(vm, a[0]);
+        char *e;
+        int64_t r;
+        if (id == SYS_STRTOF) r = (uint32_t)f2i(strtof(str, &e));
+        else if (id == SYS_STRTOD) r = (int64_t)d2u(strtod(str, &e));
+        else r = (int64_t)strtoll(str, &e, a[2]);
+        if (a[1]) { uint32_t ea = vaddr(vm, e); memcpy(vptr(vm, a[1], 4), &ea, 4); }
+        return r;
+    }
+    case SYS_ATOLL: return (int64_t)strtoll(vstr(vm, a[0]), 0, 10);
+    case SYS_LLABS: { int64_t v = (int64_t)(((uint64_t)(uint32_t)a[1] << 32) | (uint32_t)a[0]); return v < 0 ? -v : v; }
+    case SYS_SETJMP: {
+        /* jmp_buf: pc fp sp rec lr osp depth magic, then the 8 operand
+         * cells under the call (the expression setjmp sits in) */
+        uint32_t b[16];
+        int k;
+        b[0] = vm->pc; b[1] = vm->fp; b[2] = vm->sp; b[3] = vm->rec; b[4] = vm->lr;
+        b[5] = (uint32_t)vm->osp; b[6] = (uint32_t)vm->native_depth; b[7] = 0x4A4D5042;
+        for (k = 0; k < 8; k++) b[8 + k] = vm->osp - 8 + k >= 0 ? (uint32_t)vm->ost[vm->osp - 8 + k] : 0;
+        memcpy(vptr(vm, a[0], 64), b, 64);
+        return 0;
+    }
+    case SYS_LONGJMP: {
+        uint32_t b[16];
+        int k;
+        memcpy(b, vptr(vm, a[0], 64), 64);
+        if (b[7] != 0x4A4D5042 || (int)b[6] != vm->native_depth || b[5] > OSTK) vm_fail(vm, "longjmp to an invalid jmp_buf");
+        vm->pc = b[0]; vm->fp = b[1]; vm->sp = b[2]; vm->rec = b[3]; vm->lr = b[4];
+        vm->osp = (int)b[5];
+        for (k = 0; k < 8; k++) if (vm->osp - 8 + k >= 0) vm->ost[vm->osp - 8 + k] = (int32_t)b[8 + k];
+        return a[1] ? a[1] : 1;
+    }
+    case SYS_VPRINTF: case SYS_VSPRINTF: case SYS_VSNPRINTF: case SYS_VFPRINTF: {
+        int32_t cells[64];
+        Out o = {0, 0, 0, 0};
+        int fi = id == SYS_VPRINTF ? 0 : id == SYS_VSNPRINTF ? 2 : 1;
+        int nc = va_cells(vm, (uint32_t)a[fi + 1], cells, 64);
+        if (id == SYS_VSPRINTF) { o.buf = (char *)vptr(vm, a[0], 1); o.cap = (int)(vm->mem_size - (uint32_t)a[0]); }
+        if (id == SYS_VSNPRINTF) { o.buf = a[1] > 0 ? (char *)vptr(vm, a[0], a[1]) : buf; o.cap = a[1] > 0 ? a[1] : 0; }
+        if (id == SYS_VFPRINTF) {
+            if (a[0] != 2 && a[0] != 3) { o.file = getfile(vm, a[0]); if (!o.file) return -1; }
+        }
+        return vm_format(vm, &o, vstr(vm, a[fi]), cells, nc);
+    }
     case SYS_STRTOL: {
         char *s = vstr(vm, a[0]);
         char *e;
@@ -1009,25 +1111,44 @@ static int32_t vm_sys(VM *vm, int id, int32_t *a, int n)
     case SYS_HEAPFREE: return (int32_t)heap_free_bytes(vm);
     case SYS_ASSERT: if (!a[0]) vm_fail(vm, "assertion failed"); return 0;
 
-    case SYS_SIN: return f2i(sinf(i2f(a[0])));
-    case SYS_COS: return f2i(cosf(i2f(a[0])));
-    case SYS_TAN: return f2i(tanf(i2f(a[0])));
-    case SYS_ASIN: return f2i(asinf(i2f(a[0])));
-    case SYS_ACOS: return f2i(acosf(i2f(a[0])));
-    case SYS_ATAN: return f2i(atanf(i2f(a[0])));
-    case SYS_ATAN2: return f2i(atan2f(i2f(a[0]), i2f(a[1])));
-    case SYS_SQRT: return f2i(sqrtf(i2f(a[0])));
-    case SYS_POW: return f2i(powf(i2f(a[0]), i2f(a[1])));
-    case SYS_EXP: return f2i(expf(i2f(a[0])));
-    case SYS_LOG: return f2i(logf(i2f(a[0])));
-    case SYS_LOG10: return f2i(log10f(i2f(a[0])));
-    case SYS_FLOOR: return f2i(floorf(i2f(a[0])));
-    case SYS_CEIL: return f2i(ceilf(i2f(a[0])));
-    case SYS_FABS: return f2i(fabsf(i2f(a[0])));
-    case SYS_FMOD: return f2i(fmodf(i2f(a[0]), i2f(a[1])));
-    case SYS_ROUND: return f2i(roundf(i2f(a[0])));
-    case SYS_FMIN: return f2i(fminf(i2f(a[0]), i2f(a[1])));
-    case SYS_FMAX: return f2i(fmaxf(i2f(a[0]), i2f(a[1])));
+    case SYS_SIN: RETD(sin(ARGD(0)));
+    case SYS_COS: RETD(cos(ARGD(0)));
+    case SYS_TAN: RETD(tan(ARGD(0)));
+    case SYS_ASIN: RETD(asin(ARGD(0)));
+    case SYS_ACOS: RETD(acos(ARGD(0)));
+    case SYS_ATAN: RETD(atan(ARGD(0)));
+    case SYS_ATAN2: RETD(atan2(ARGD(0), ARGD(2)));
+    case SYS_SQRT: RETD(sqrt(ARGD(0)));
+    case SYS_POW: RETD(pow(ARGD(0), ARGD(2)));
+    case SYS_EXP: RETD(exp(ARGD(0)));
+    case SYS_LOG: RETD(log(ARGD(0)));
+    case SYS_LOG10: RETD(log10(ARGD(0)));
+    case SYS_FLOOR: RETD(floor(ARGD(0)));
+    case SYS_CEIL: RETD(ceil(ARGD(0)));
+    case SYS_FABS: RETD(fabs(ARGD(0)));
+    case SYS_FMOD: RETD(fmod(ARGD(0), ARGD(2)));
+    case SYS_ROUND: RETD(round(ARGD(0)));
+    case SYS_FMIN: RETD(fmin(ARGD(0), ARGD(2)));
+    case SYS_FMAX: RETD(fmax(ARGD(0), ARGD(2)));
+    case SYS_SINF: return (uint32_t)f2i(sinf(i2f(a[0])));
+    case SYS_COSF: return (uint32_t)f2i(cosf(i2f(a[0])));
+    case SYS_TANF: return (uint32_t)f2i(tanf(i2f(a[0])));
+    case SYS_ASINF: return (uint32_t)f2i(asinf(i2f(a[0])));
+    case SYS_ACOSF: return (uint32_t)f2i(acosf(i2f(a[0])));
+    case SYS_ATANF: return (uint32_t)f2i(atanf(i2f(a[0])));
+    case SYS_ATAN2F: return (uint32_t)f2i(atan2f(i2f(a[0]), i2f(a[1])));
+    case SYS_SQRTF: return (uint32_t)f2i(sqrtf(i2f(a[0])));
+    case SYS_POWF: return (uint32_t)f2i(powf(i2f(a[0]), i2f(a[1])));
+    case SYS_EXPF: return (uint32_t)f2i(expf(i2f(a[0])));
+    case SYS_LOGF: return (uint32_t)f2i(logf(i2f(a[0])));
+    case SYS_LOG10F: return (uint32_t)f2i(log10f(i2f(a[0])));
+    case SYS_FLOORF: return (uint32_t)f2i(floorf(i2f(a[0])));
+    case SYS_CEILF: return (uint32_t)f2i(ceilf(i2f(a[0])));
+    case SYS_FABSF: return (uint32_t)f2i(fabsf(i2f(a[0])));
+    case SYS_FMODF: return (uint32_t)f2i(fmodf(i2f(a[0]), i2f(a[1])));
+    case SYS_ROUNDF: return (uint32_t)f2i(roundf(i2f(a[0])));
+    case SYS_FMINF: return (uint32_t)f2i(fminf(i2f(a[0]), i2f(a[1])));
+    case SYS_FMAXF: return (uint32_t)f2i(fmaxf(i2f(a[0]), i2f(a[1])));
 
     case SYS_CLS: con_clear(); return 0;
     case SYS_GOTOXY: con_gotoxy(a[0], a[1]); return 0;
@@ -1058,7 +1179,7 @@ static int32_t vm_sys(VM *vm, int id, int32_t *a, int n)
     case SYS_BATTERY: return hal_battery(0);
     case SYS_CHARGING: { int ch = 0; hal_battery(&ch); return ch; }
     case SYS_CPUMHZ: return hal_cpu_khz() / 1000;
-    case SYS_TEMPERATURE: return f2i(hal_temp_c());
+    case SYS_TEMPERATURE: return (uint32_t)f2i(hal_temp_c());
     case SYS_CPUTEMP: return (int32_t)(hal_temp_c() + 0.5f);
     case SYS_SCOLS: return con_cols();
     case SYS_SROWS: return con_rows();
@@ -1097,6 +1218,68 @@ static int32_t vm_sys(VM *vm, int id, int32_t *a, int n)
 /* the interpreter                                                     */
 /* ------------------------------------------------------------------ */
 
+/* conversions shared by the direct opcodes and OP_CVTU */
+static int conv_apply(int32_t *ost, int *posp, int op)
+{
+    int osp = *posp;
+    uint64_t u;
+    double d;
+    float f;
+#define LO ost[osp - 2]
+#define HI ost[osp - 1]
+#define GET64() (((uint64_t)(uint32_t)HI << 32) | (uint32_t)LO)
+#define SET64(v) do { uint64_t _v = (v); LO = (int32_t)(uint32_t)_v; HI = (int32_t)(uint32_t)(_v >> 32); } while (0)
+    switch (op) {
+    case OP_ITOF: ost[osp - 1] = f2i((float)ost[osp - 1]); break;
+    case OP_UTOF: ost[osp - 1] = f2i((float)(uint32_t)ost[osp - 1]); break;
+    case OP_FTOI: case OP_FTOU: {
+        f = i2f(ost[osp - 1]);
+        if (f != f) ost[osp - 1] = 0;
+        else if (op == OP_FTOI) ost[osp - 1] = f >= 2147483647.0f ? 2147483647 : f <= -2147483648.0f ? (int32_t)0x80000000u : (int32_t)f;
+        else ost[osp - 1] = f <= 0 ? 0 : f >= 4294967295.0f ? -1 : (int32_t)(uint32_t)f;
+        break;
+    }
+    case OP_SEXT8: ost[osp - 1] = (int8_t)ost[osp - 1]; break;
+    case OP_ZEXT8: ost[osp - 1] = (uint8_t)ost[osp - 1]; break;
+    case OP_SEXT16: ost[osp - 1] = (int16_t)ost[osp - 1]; break;
+    case OP_ZEXT16: ost[osp - 1] = (uint16_t)ost[osp - 1]; break;
+    case OP_I2L: ost[osp] = ost[osp - 1] < 0 ? -1 : 0; osp++; break;
+    case OP_U2L: ost[osp] = 0; osp++; break;
+    case OP_I2D: d = (double)ost[osp - 1]; u = d2u(d); ost[osp - 1] = (int32_t)(uint32_t)u; ost[osp] = (int32_t)(uint32_t)(u >> 32); osp++; break;
+    case OP_U2D: d = (double)(uint32_t)ost[osp - 1]; u = d2u(d); ost[osp - 1] = (int32_t)(uint32_t)u; ost[osp] = (int32_t)(uint32_t)(u >> 32); osp++; break;
+    case OP_F2D: d = (double)i2f(ost[osp - 1]); u = d2u(d); ost[osp - 1] = (int32_t)(uint32_t)u; ost[osp] = (int32_t)(uint32_t)(u >> 32); osp++; break;
+    case OP_L2I: osp--; break;
+    case OP_L2B: u = GET64(); osp--; ost[osp - 1] = u != 0; break;
+    case OP_D2B: d = u2d(GET64()); osp--; ost[osp - 1] = d != 0; break;
+    case OP_L2D: SET64(d2u((double)(int64_t)GET64())); break;
+    case OP_UL2D: SET64(d2u((double)GET64())); break;
+    case OP_D2F: d = u2d(GET64()); osp--; ost[osp - 1] = f2i((float)d); break;
+    case OP_D2I: case OP_D2U: {
+        d = u2d(GET64());
+        osp--;
+        if (d != d) ost[osp - 1] = 0;
+        else if (op == OP_D2I) ost[osp - 1] = d >= 2147483647.0 ? 2147483647 : d <= -2147483648.0 ? (int32_t)0x80000000u : (int32_t)d;
+        else ost[osp - 1] = d <= 0 ? 0 : d >= 4294967295.0 ? -1 : (int32_t)(uint32_t)d;
+        break;
+    }
+    case OP_D2L: case OP_D2UL: {
+        d = u2d(GET64());
+        if (d != d) u = 0;
+        else if (op == OP_D2L) u = d >= 9.2233720368547758e18 ? 0x7FFFFFFFFFFFFFFFull : d <= -9.2233720368547758e18 ? 0x8000000000000000ull : (uint64_t)(int64_t)d;
+        else u = d <= 0 ? 0 : d >= 1.8446744073709552e19 ? ~0ull : (uint64_t)d;
+        SET64(u);
+        break;
+    }
+    default: return 0;
+    }
+#undef LO
+#undef HI
+#undef GET64
+#undef SET64
+    *posp = osp;
+    return 1;
+}
+
 #define PUSH(v) do { if (osp >= OSTK) goto ostk_over; ost[osp++] = (int32_t)(v); } while (0)
 #define POP() (ost[--osp])
 #define TOP ost[osp - 1]
@@ -1105,6 +1288,12 @@ static int32_t vm_sys(VM *vm, int id, int32_t *a, int n)
 #define RD16() (pc += 2, (int16_t)(code[pc - 2] | (code[pc - 1] << 8)))
 #define RD32() (pc += 4, (int32_t)rd32(code + pc - 4))
 #define MCHK(a, n) do { uint32_t _a = (a); if (_a < CBC_DATA_BASE || _a > memlim - (n)) { vm->cur_op_pc = opc; chk(vm, _a, (n)); } } while (0)
+/* 64-bit values: low word below, high word on top */
+#define TOP64 (((uint64_t)(uint32_t)ost[osp - 1] << 32) | (uint32_t)ost[osp - 2])
+#define POP64(v) do { v = TOP64; osp -= 2; } while (0)
+#define SETTOP64(v) do { uint64_t _v = (v); ost[osp - 2] = (int32_t)(uint32_t)_v; ost[osp - 1] = (int32_t)(uint32_t)(_v >> 32); } while (0)
+#define PUSH64(v) do { uint64_t _w = (v); if (osp >= OSTK - 1) goto ostk_over; ost[osp] = (int32_t)(uint32_t)_w; ost[osp + 1] = (int32_t)(uint32_t)(_w >> 32); osp += 2; } while (0)
+#define REC 24                  /* frame record: lr fp rec sp vacount pad */
 
 static void vm_exec(VM *vm)
 {
@@ -1119,213 +1308,265 @@ static void vm_exec(VM *vm)
     uint32_t budget = 4096;
     int32_t a, b;
     uint32_t ua, ub;
+    uint64_t la, lb;
 
 #define SYNC() do { vm->osp = osp; vm->pc = pc; vm->fp = fp; vm->sp = sp; vm->rec = rec; vm->lr = lr; vm->cur_op_pc = opc; } while (0)
 #define LOAD() do { osp = vm->osp; pc = vm->pc; fp = vm->fp; sp = vm->sp; rec = vm->rec; lr = vm->lr; } while (0)
 
+#if !defined(__GNUC__)
+#error "the VM uses GNU C computed goto"
+#endif
+    /* computed goto: one indirect jump per instruction */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverride-init"
+    static void *const tab[256] = {
+        [0 ... 255] = &&op_bad,
+#define T(o) [OP_##o] = &&op_##o
+        T(HALT), T(IMM), T(IMM8), T(IMM16), T(LEA), T(LEA32), T(LDB), T(LDBU), T(LDH), T(LDHU), T(LDW),
+        T(STB), T(STH), T(STW), T(ADD), T(SUB), T(MUL), T(DIV), T(MOD), T(DIVU), T(MODU), T(AND), T(OR),
+        T(XOR), T(SHL), T(SHR), T(SAR), T(NEG), T(NOT), T(LNOT), T(EQ), T(NE), T(LT), T(LE), T(GT), T(GE),
+        T(LTU), T(LEU), T(GTU), T(GEU), T(FADD), T(FSUB), T(FMUL), T(FDIV), T(FNEG), T(FEQ), T(FNE), T(FLT),
+        T(FLE), T(FGT), T(FGE), T(ITOF), T(UTOF), T(FTOI), T(FTOU), T(ITOF2), T(UTOF2), T(SEXT8), T(ZEXT8),
+        T(SEXT16), T(ZEXT16), T(JMP), T(JZ), T(JNZ), T(CALL), T(CALLI), T(ENTER), T(RET), T(RETV), T(POP),
+        T(DUP), T(SWAP), T(MEMCPY), T(SYS), T(INC), T(LLW), T(MEMSET), T(ADDI), T(LGW), T(LDD), T(STD),
+        T(LADD), T(LSUB), T(LMUL), T(LDIV), T(LMOD), T(LDIVU), T(LMODU), T(LAND), T(LOR), T(LXOR), T(LSHL),
+        T(LSHR), T(LSAR), T(LNEG), T(LCOM), T(LEQ), T(LNE), T(LLT), T(LLE), T(LGT), T(LGE), T(LLTU), T(LLEU),
+        T(LGTU), T(LGEU), T(DADD), T(DSUB), T(DMUL), T(DDIV), T(DNEG), T(DEQ), T(DNE), T(DLT), T(DLE), T(DGT),
+        T(DGE), T(I2L), T(U2L), T(L2I), T(I2D), T(U2D), T(L2D), T(UL2D), T(F2D), T(D2F), T(D2I), T(D2U),
+        T(D2L), T(D2UL), T(L2B), T(D2B), T(CVTU), T(ENTERV), T(VASTART), T(STWP), T(STBP), T(STHP), T(STDP),
+        T(JEQ), T(JNE), T(JLT), T(JLE), T(JGT), T(JGE),
+#undef T
+    };
+#pragma GCC diagnostic pop
+#define CASE(o) op_##o:
+#define NEXT do { if (--budget == 0) goto housekeeping; opc = pc; if (pc >= csize) goto bad_pc; goto *tab[code[pc++]]; } while (0)
+
     for (;;) {
-        if (--budget == 0) {
-            budget = 4096;
-            vm->icount += 4096;
-            if (hal_millis() - vm->last_poll >= 50) {
-                vm->last_poll = hal_millis();
-                SYNC();
-                if (con_poll_break()) vm_fail(vm, "break (Ctrl+C)");
-                con_flush();
-            }
+        NEXT;
+        CASE(HALT) SYNC(); return;
+        CASE(IMM) a = RD32(); PUSH(a); NEXT;
+        CASE(IMM8) a = RD8(); PUSH(a); NEXT;
+        CASE(IMM16) a = RD16(); PUSH(a); NEXT;
+        CASE(LEA) a = RD16(); PUSH(fp + (uint32_t)a); NEXT;
+        CASE(LEA32) a = RD32(); PUSH(fp + (uint32_t)a); NEXT;
+        CASE(LLW) a = RD16(); ua = fp + (uint32_t)a; MCHK(ua, 4); PUSH(rd32(mem + ua)); NEXT;
+        CASE(LGW) ua = (uint32_t)RD32(); MCHK(ua, 4); PUSH(rd32(mem + ua)); NEXT;
+        CASE(LDB) ua = (uint32_t)TOP; MCHK(ua, 1); TOP = (int8_t)mem[ua]; NEXT;
+        CASE(LDBU) ua = (uint32_t)TOP; MCHK(ua, 1); TOP = mem[ua]; NEXT;
+        CASE(LDH) ua = (uint32_t)TOP; MCHK(ua, 2); TOP = (int16_t)(mem[ua] | (mem[ua + 1] << 8)); NEXT;
+        CASE(LDHU) ua = (uint32_t)TOP; MCHK(ua, 2); TOP = (uint16_t)(mem[ua] | (mem[ua + 1] << 8)); NEXT;
+        CASE(LDW) ua = (uint32_t)TOP; MCHK(ua, 4); TOP = (int32_t)rd32(mem + ua); NEXT;
+        CASE(LDD) ua = (uint32_t)TOP; MCHK(ua, 8); if (osp >= OSTK) goto ostk_over;
+            TOP = (int32_t)rd32(mem + ua); ost[osp++] = (int32_t)rd32(mem + ua + 4); NEXT;
+        CASE(STB) a = POP(); ua = (uint32_t)TOP; MCHK(ua, 1); mem[ua] = (uint8_t)a; TOP = a; NEXT;
+        CASE(STH) a = POP(); ua = (uint32_t)TOP; MCHK(ua, 2); mem[ua] = (uint8_t)a; mem[ua + 1] = (uint8_t)(a >> 8); TOP = a; NEXT;
+        CASE(STW) a = POP(); ua = (uint32_t)TOP; MCHK(ua, 4); memcpy(mem + ua, &a, 4); TOP = a; NEXT;
+        CASE(STD) ua = (uint32_t)ost[osp - 3]; MCHK(ua, 8); memcpy(mem + ua, &ost[osp - 2], 8);
+            ost[osp - 3] = ost[osp - 2]; ost[osp - 2] = ost[osp - 1]; osp--; NEXT;
+        CASE(STBP) a = POP(); ua = (uint32_t)POP(); MCHK(ua, 1); mem[ua] = (uint8_t)a; NEXT;
+        CASE(STHP) a = POP(); ua = (uint32_t)POP(); MCHK(ua, 2); mem[ua] = (uint8_t)a; mem[ua + 1] = (uint8_t)(a >> 8); NEXT;
+        CASE(STWP) a = POP(); ua = (uint32_t)POP(); MCHK(ua, 4); memcpy(mem + ua, &a, 4); NEXT;
+        CASE(STDP) ua = (uint32_t)ost[osp - 3]; MCHK(ua, 8); memcpy(mem + ua, &ost[osp - 2], 8); osp -= 3; NEXT;
+        CASE(ADD) b = POP(); TOP = (int32_t)((uint32_t)TOP + (uint32_t)b); NEXT;
+        CASE(ADDI) a = RD32(); TOP = (int32_t)((uint32_t)TOP + (uint32_t)a); NEXT;
+        CASE(SUB) b = POP(); TOP = (int32_t)((uint32_t)TOP - (uint32_t)b); NEXT;
+        CASE(MUL) b = POP(); TOP = (int32_t)((uint32_t)TOP * (uint32_t)b); NEXT;
+        CASE(DIV) b = POP(); if (b == 0) goto div_zero; TOP = b == -1 ? (int32_t)(0u - (uint32_t)TOP) : TOP / b; NEXT;
+        CASE(MOD) b = POP(); if (b == 0) goto mod_zero; TOP = b == -1 ? 0 : TOP % b; NEXT;
+        CASE(DIVU) ub = (uint32_t)POP(); if (ub == 0) goto div_zero; TOP = (int32_t)((uint32_t)TOP / ub); NEXT;
+        CASE(MODU) ub = (uint32_t)POP(); if (ub == 0) goto mod_zero; TOP = (int32_t)((uint32_t)TOP % ub); NEXT;
+        CASE(AND) b = POP(); TOP &= b; NEXT;
+        CASE(OR) b = POP(); TOP |= b; NEXT;
+        CASE(XOR) b = POP(); TOP ^= b; NEXT;
+        CASE(SHL) b = POP(); TOP = (int32_t)((uint32_t)TOP << (b & 31)); NEXT;
+        CASE(SHR) b = POP(); TOP = (int32_t)((uint32_t)TOP >> (b & 31)); NEXT;
+        CASE(SAR) b = POP(); TOP = TOP >> (b & 31); NEXT;
+        CASE(NEG) TOP = (int32_t)(0u - (uint32_t)TOP); NEXT;
+        CASE(NOT) TOP = ~TOP; NEXT;
+        CASE(LNOT) TOP = !TOP; NEXT;
+        CASE(EQ) b = POP(); TOP = TOP == b; NEXT;
+        CASE(NE) b = POP(); TOP = TOP != b; NEXT;
+        CASE(LT) b = POP(); TOP = TOP < b; NEXT;
+        CASE(LE) b = POP(); TOP = TOP <= b; NEXT;
+        CASE(GT) b = POP(); TOP = TOP > b; NEXT;
+        CASE(GE) b = POP(); TOP = TOP >= b; NEXT;
+        CASE(LTU) ub = (uint32_t)POP(); TOP = (uint32_t)TOP < ub; NEXT;
+        CASE(LEU) ub = (uint32_t)POP(); TOP = (uint32_t)TOP <= ub; NEXT;
+        CASE(GTU) ub = (uint32_t)POP(); TOP = (uint32_t)TOP > ub; NEXT;
+        CASE(GEU) ub = (uint32_t)POP(); TOP = (uint32_t)TOP >= ub; NEXT;
+        CASE(FADD) b = POP(); TOP = f2i(i2f(TOP) + i2f(b)); NEXT;
+        CASE(FSUB) b = POP(); TOP = f2i(i2f(TOP) - i2f(b)); NEXT;
+        CASE(FMUL) b = POP(); TOP = f2i(i2f(TOP) * i2f(b)); NEXT;
+        CASE(FDIV) b = POP(); TOP = f2i(i2f(TOP) / i2f(b)); NEXT;
+        CASE(FNEG) TOP = (int32_t)((uint32_t)TOP ^ 0x80000000u); NEXT;
+        CASE(FEQ) b = POP(); TOP = i2f(TOP) == i2f(b); NEXT;
+        CASE(FNE) b = POP(); TOP = i2f(TOP) != i2f(b); NEXT;
+        CASE(FLT) b = POP(); TOP = i2f(TOP) < i2f(b); NEXT;
+        CASE(FLE) b = POP(); TOP = i2f(TOP) <= i2f(b); NEXT;
+        CASE(FGT) b = POP(); TOP = i2f(TOP) > i2f(b); NEXT;
+        CASE(FGE) b = POP(); TOP = i2f(TOP) >= i2f(b); NEXT;
+        CASE(ITOF2) NXT = f2i((float)NXT); NEXT;
+        CASE(UTOF2) NXT = f2i((float)(uint32_t)NXT); NEXT;
+        CASE(ITOF) CASE(UTOF) CASE(FTOI) CASE(FTOU) CASE(SEXT8) CASE(ZEXT8) CASE(SEXT16) CASE(ZEXT16)
+        CASE(L2I) CASE(L2B) CASE(D2B) CASE(L2D) CASE(UL2D) CASE(D2F) CASE(D2I) CASE(D2U) CASE(D2L) CASE(D2UL)
+            conv_apply(ost, &osp, code[opc]); NEXT;
+        CASE(I2L) CASE(U2L) CASE(I2D) CASE(U2D) CASE(F2D)
+            if (osp >= OSTK) goto ostk_over;
+            conv_apply(ost, &osp, code[opc]); NEXT;
+        CASE(CVTU) {
+            int cop = code[pc++], n = code[pc++], k;
+            int32_t keep[2];
+            if (n > 2 || osp >= OSTK || osp < n + 1) goto bad_op;
+            for (k = 0; k < n; k++) keep[k] = ost[osp - n + k];
+            osp -= n;
+            if (!conv_apply(ost, &osp, cop)) goto bad_op;
+            for (k = 0; k < n; k++) ost[osp++] = keep[k];
+            NEXT;
         }
-        opc = pc;
-        if (pc >= csize) { SYNC(); vm_fail(vm, "jump outside the program"); }
-        switch (code[pc++]) {
-        case OP_HALT:
-            SYNC();
-            return;
-        case OP_IMM: a = RD32(); PUSH(a); break;
-        case OP_IMM8: a = RD8(); PUSH(a); break;
-        case OP_IMM16: a = RD16(); PUSH(a); break;
-        case OP_LEA: a = RD16(); PUSH(fp + (uint32_t)a); break;
-        case OP_LEA32: a = RD32(); PUSH(fp + (uint32_t)a); break;
-        case OP_LLW:
-            a = RD16();
-            ua = fp + (uint32_t)a;
-            MCHK(ua, 4);
-            PUSH(rd32(mem + ua));
-            break;
-        case OP_LGW:
-            ua = (uint32_t)RD32();
-            MCHK(ua, 4);
-            PUSH(rd32(mem + ua));
-            break;
-        case OP_LDB: ua = (uint32_t)TOP; MCHK(ua, 1); TOP = (int8_t)mem[ua]; break;
-        case OP_LDBU: ua = (uint32_t)TOP; MCHK(ua, 1); TOP = mem[ua]; break;
-        case OP_LDH: ua = (uint32_t)TOP; MCHK(ua, 2); TOP = (int16_t)(mem[ua] | (mem[ua + 1] << 8)); break;
-        case OP_LDHU: ua = (uint32_t)TOP; MCHK(ua, 2); TOP = (uint16_t)(mem[ua] | (mem[ua + 1] << 8)); break;
-        case OP_LDW: ua = (uint32_t)TOP; MCHK(ua, 4); TOP = (int32_t)rd32(mem + ua); break;
-        case OP_STB: a = POP(); ua = (uint32_t)TOP; MCHK(ua, 1); mem[ua] = (uint8_t)a; TOP = a; break;
-        case OP_STH: a = POP(); ua = (uint32_t)TOP; MCHK(ua, 2); mem[ua] = (uint8_t)a; mem[ua + 1] = (uint8_t)(a >> 8); TOP = a; break;
-        case OP_STW: a = POP(); ua = (uint32_t)TOP; MCHK(ua, 4); memcpy(mem + ua, &a, 4); TOP = a; break;
-        case OP_ADD: b = POP(); TOP = (int32_t)((uint32_t)TOP + (uint32_t)b); break;
-        case OP_SUB: b = POP(); TOP = (int32_t)((uint32_t)TOP - (uint32_t)b); break;
-        case OP_MUL: b = POP(); TOP = (int32_t)((uint32_t)TOP * (uint32_t)b); break;
-        case OP_DIV:
-            b = POP();
-            if (b == 0) { SYNC(); vm_fail(vm, "division by zero"); }
-            if (b == -1) TOP = (int32_t)(0u - (uint32_t)TOP);
-            else TOP = TOP / b;
-            break;
-        case OP_MOD:
-            b = POP();
-            if (b == 0) { SYNC(); vm_fail(vm, "division by zero (modulo)"); }
-            if (b == -1) TOP = 0;
-            else TOP = TOP % b;
-            break;
-        case OP_DIVU:
-            ub = (uint32_t)POP();
-            if (ub == 0) { SYNC(); vm_fail(vm, "division by zero"); }
-            TOP = (int32_t)((uint32_t)TOP / ub);
-            break;
-        case OP_MODU:
-            ub = (uint32_t)POP();
-            if (ub == 0) { SYNC(); vm_fail(vm, "division by zero (modulo)"); }
-            TOP = (int32_t)((uint32_t)TOP % ub);
-            break;
-        case OP_AND: b = POP(); TOP &= b; break;
-        case OP_OR: b = POP(); TOP |= b; break;
-        case OP_XOR: b = POP(); TOP ^= b; break;
-        case OP_SHL: b = POP(); TOP = (int32_t)((uint32_t)TOP << (b & 31)); break;
-        case OP_SHR: b = POP(); TOP = (int32_t)((uint32_t)TOP >> (b & 31)); break;
-        case OP_SAR: b = POP(); TOP = TOP >> (b & 31); break;
-        case OP_NEG: TOP = (int32_t)(0u - (uint32_t)TOP); break;
-        case OP_NOT: TOP = ~TOP; break;
-        case OP_LNOT: TOP = !TOP; break;
-        case OP_EQ: b = POP(); TOP = TOP == b; break;
-        case OP_NE: b = POP(); TOP = TOP != b; break;
-        case OP_LT: b = POP(); TOP = TOP < b; break;
-        case OP_LE: b = POP(); TOP = TOP <= b; break;
-        case OP_GT: b = POP(); TOP = TOP > b; break;
-        case OP_GE: b = POP(); TOP = TOP >= b; break;
-        case OP_LTU: ub = (uint32_t)POP(); TOP = (uint32_t)TOP < ub; break;
-        case OP_LEU: ub = (uint32_t)POP(); TOP = (uint32_t)TOP <= ub; break;
-        case OP_GTU: ub = (uint32_t)POP(); TOP = (uint32_t)TOP > ub; break;
-        case OP_GEU: ub = (uint32_t)POP(); TOP = (uint32_t)TOP >= ub; break;
-        case OP_FADD: b = POP(); TOP = f2i(i2f(TOP) + i2f(b)); break;
-        case OP_FSUB: b = POP(); TOP = f2i(i2f(TOP) - i2f(b)); break;
-        case OP_FMUL: b = POP(); TOP = f2i(i2f(TOP) * i2f(b)); break;
-        case OP_FDIV: b = POP(); TOP = f2i(i2f(TOP) / i2f(b)); break;
-        case OP_FNEG: TOP = (int32_t)((uint32_t)TOP ^ 0x80000000u); break;
-        case OP_FEQ: b = POP(); TOP = i2f(TOP) == i2f(b); break;
-        case OP_FNE: b = POP(); TOP = i2f(TOP) != i2f(b); break;
-        case OP_FLT: b = POP(); TOP = i2f(TOP) < i2f(b); break;
-        case OP_FLE: b = POP(); TOP = i2f(TOP) <= i2f(b); break;
-        case OP_FGT: b = POP(); TOP = i2f(TOP) > i2f(b); break;
-        case OP_FGE: b = POP(); TOP = i2f(TOP) >= i2f(b); break;
-        case OP_ITOF: TOP = f2i((float)TOP); break;
-        case OP_UTOF: TOP = f2i((float)(uint32_t)TOP); break;
-        case OP_FTOI: {
-            float f = i2f(TOP);
-            if (f != f) TOP = 0;
-            else if (f >= 2147483647.0f) TOP = 2147483647;
-            else if (f <= -2147483648.0f) TOP = (int32_t)0x80000000u;
-            else TOP = (int32_t)f;
-            break;
-        }
-        case OP_FTOU: {
-            float f = i2f(TOP);
-            if (f != f || f <= 0) TOP = 0;
-            else if (f >= 4294967295.0f) TOP = -1;
-            else TOP = (int32_t)(uint32_t)f;
-            break;
-        }
-        case OP_ITOF2: NXT = f2i((float)NXT); break;
-        case OP_UTOF2: NXT = f2i((float)(uint32_t)NXT); break;
-        case OP_SEXT8: TOP = (int8_t)TOP; break;
-        case OP_ZEXT8: TOP = (uint8_t)TOP; break;
-        case OP_SEXT16: TOP = (int16_t)TOP; break;
-        case OP_ZEXT16: TOP = (uint16_t)TOP; break;
-        case OP_JMP: pc = (uint32_t)RD32(); break;
-        case OP_JZ: a = RD32(); if (POP() == 0) pc = (uint32_t)a; break;
-        case OP_JNZ: a = RD32(); if (POP() != 0) pc = (uint32_t)a; break;
-        case OP_CALL:
-            a = RD32();
-            lr = pc;
-            pc = (uint32_t)a;
-            break;
-        case OP_CALLI: {
-            int n = code[pc++];
-            int i;
+        CASE(LADD) POP64(lb); SETTOP64(TOP64 + lb); NEXT;
+        CASE(LSUB) POP64(lb); SETTOP64(TOP64 - lb); NEXT;
+        CASE(LMUL) POP64(lb); SETTOP64(TOP64 * lb); NEXT;
+        CASE(LDIV) POP64(lb); if (!lb) goto div_zero; la = TOP64;
+            SETTOP64(lb == ~0ull ? 0 - la : (uint64_t)((int64_t)la / (int64_t)lb)); NEXT;
+        CASE(LMOD) POP64(lb); if (!lb) goto mod_zero; la = TOP64;
+            SETTOP64(lb == ~0ull ? 0 : (uint64_t)((int64_t)la % (int64_t)lb)); NEXT;
+        CASE(LDIVU) POP64(lb); if (!lb) goto div_zero; SETTOP64(TOP64 / lb); NEXT;
+        CASE(LMODU) POP64(lb); if (!lb) goto mod_zero; SETTOP64(TOP64 % lb); NEXT;
+        CASE(LAND) POP64(lb); SETTOP64(TOP64 & lb); NEXT;
+        CASE(LOR) POP64(lb); SETTOP64(TOP64 | lb); NEXT;
+        CASE(LXOR) POP64(lb); SETTOP64(TOP64 ^ lb); NEXT;
+        CASE(LSHL) b = POP(); SETTOP64(TOP64 << (b & 63)); NEXT;
+        CASE(LSHR) b = POP(); SETTOP64(TOP64 >> (b & 63)); NEXT;
+        CASE(LSAR) b = POP(); SETTOP64((uint64_t)((int64_t)TOP64 >> (b & 63))); NEXT;
+        CASE(LNEG) SETTOP64(0 - TOP64); NEXT;
+        CASE(LCOM) SETTOP64(~TOP64); NEXT;
+#define LCMP(o, expr) CASE(o) POP64(lb); la = TOP64; osp--; TOP = (expr); NEXT;
+        LCMP(LEQ, la == lb)
+        LCMP(LNE, la != lb)
+        LCMP(LLT, (int64_t)la < (int64_t)lb)
+        LCMP(LLE, (int64_t)la <= (int64_t)lb)
+        LCMP(LGT, (int64_t)la > (int64_t)lb)
+        LCMP(LGE, (int64_t)la >= (int64_t)lb)
+        LCMP(LLTU, la < lb)
+        LCMP(LLEU, la <= lb)
+        LCMP(LGTU, la > lb)
+        LCMP(LGEU, la >= lb)
+        LCMP(DEQ, u2d(la) == u2d(lb))
+        LCMP(DNE, u2d(la) != u2d(lb))
+        LCMP(DLT, u2d(la) < u2d(lb))
+        LCMP(DLE, u2d(la) <= u2d(lb))
+        LCMP(DGT, u2d(la) > u2d(lb))
+        LCMP(DGE, u2d(la) >= u2d(lb))
+#undef LCMP
+        CASE(DADD) POP64(lb); SETTOP64(d2u(u2d(TOP64) + u2d(lb))); NEXT;
+        CASE(DSUB) POP64(lb); SETTOP64(d2u(u2d(TOP64) - u2d(lb))); NEXT;
+        CASE(DMUL) POP64(lb); SETTOP64(d2u(u2d(TOP64) * u2d(lb))); NEXT;
+        CASE(DDIV) POP64(lb); SETTOP64(d2u(u2d(TOP64) / u2d(lb))); NEXT;
+        CASE(DNEG) TOP = (int32_t)((uint32_t)TOP ^ 0x80000000u); NEXT;
+        CASE(JMP) pc = (uint32_t)RD32(); NEXT;
+        CASE(JZ) a = RD32(); if (POP() == 0) pc = (uint32_t)a; NEXT;
+        CASE(JNZ) a = RD32(); if (POP() != 0) pc = (uint32_t)a; NEXT;
+#define JCMP(o, expr) CASE(o) a = RD32(); b = POP(); ua = (uint32_t)POP(); if (expr) pc = (uint32_t)a; NEXT;
+        JCMP(JEQ, (int32_t)ua == b)
+        JCMP(JNE, (int32_t)ua != b)
+        JCMP(JLT, (int32_t)ua < b)
+        JCMP(JLE, (int32_t)ua <= b)
+        JCMP(JGT, (int32_t)ua > b)
+        JCMP(JGE, (int32_t)ua >= b)
+#undef JCMP
+        CASE(CALL) a = RD32(); lr = pc; pc = (uint32_t)a; NEXT;
+        CASE(CALLI) {
+            int n = code[pc++], i;
             ua = (uint32_t)ost[osp - n - 1];
             for (i = osp - n - 1; i < osp - 1; i++) ost[i] = ost[i + 1];
             osp--;
-            if (ua >= csize || ua == 0) { SYNC(); vm_fail(vm, ua == 0 ? "call through a null function pointer" : "call through an invalid function pointer"); }
+            if (ua >= csize || ua == 0) {
+                SYNC();
+                vm_fail(vm, ua == 0 ? "call through a null function pointer" : "call through an invalid function pointer");
+            }
             lr = pc;
             pc = ua;
-            break;
+            NEXT;
         }
-        case OP_ENTER: {
-            int np = code[pc++];
-            uint32_t size = (uint32_t)RD32();
-            uint32_t r;
-            int i;
-            if (sp < vm->stack_limit + size + 16 || size > memlim) { SYNC(); vm_fail(vm, "stack overflow (recursion too deep?)"); }
-            r = sp - 16;
+        CASE(ENTER) CASE(ENTERV) {
+            int np = code[pc++], nv = 0, total, i;
+            uint32_t size = (uint32_t)RD32(), r;
+            if (code[opc] == OP_ENTERV) {
+                nv = POP();
+                if (nv < 0 || nv > osp) goto bad_op;
+            }
+            total = np + nv;
+            if (total > osp) { SYNC(); vm_fail(vm, "internal: missing arguments"); }
+            if (size > memlim || sp < vm->stack_limit + size + REC + (uint32_t)nv * 4u) {
+                SYNC();
+                vm_fail(vm, "stack overflow (recursion too deep?)");
+            }
+            r = sp - REC;
             memcpy(mem + r, &lr, 4);
             memcpy(mem + r + 4, &fp, 4);
             memcpy(mem + r + 8, &rec, 4);
             memcpy(mem + r + 12, &sp, 4);
+            memcpy(mem + r + 16, &nv, 4);
             rec = r;
-            sp = r - size;
+            /* variadic cells sit just below the record */
+            if (nv) memcpy(mem + r - (uint32_t)nv * 4u, &ost[osp - nv], (size_t)nv * 4);
+            sp = r - (uint32_t)nv * 4u - size;
             fp = sp;
             if (memlim - sp > vm_last.stack_peak) vm_last.stack_peak = memlim - sp;
-            if (np > osp) { SYNC(); vm_fail(vm, "internal: missing arguments"); }
-            for (i = 0; i < np; i++) memcpy(mem + fp + (uint32_t)(i * 4), &ost[osp - np + i], 4);
-            osp -= np;
+            for (i = 0; i < np; i++) memcpy(mem + fp + (uint32_t)(i * 4), &ost[osp - total + i], 4);
+            osp -= total;
             if (size > (uint32_t)np * 4) memset(mem + fp + (uint32_t)np * 4, 0, size - (uint32_t)np * 4);
             if (osp > OSTK - 64) goto ostk_over;
-            break;
+            NEXT;
         }
-        case OP_RET:
-            PUSH(0);
-            /* fall through */
-        case OP_RETV:
+        CASE(VASTART) {
+            int32_t nv;
+            memcpy(&nv, mem + rec + 16, 4);
+            PUSH(rec - (uint32_t)nv * 4u);
+            NEXT;
+        }
+        CASE(RET) PUSH(0);
+        /* fall through */
+        CASE(RETV)
             pc = rd32(mem + rec);
             fp = rd32(mem + rec + 4);
             sp = rd32(mem + rec + 12);
             rec = rd32(mem + rec + 8);
             if (pc == LR_NATIVE) { SYNC(); return; }
-            break;
-        case OP_POP: osp--; break;
-        case OP_DUP: a = TOP; PUSH(a); break;
-        case OP_SWAP: a = TOP; TOP = NXT; NXT = a; break;
-        case OP_MEMCPY: {
+            NEXT;
+        CASE(POP) osp--; NEXT;
+        CASE(DUP) a = TOP; PUSH(a); NEXT;
+        CASE(SWAP) a = TOP; TOP = NXT; NXT = a; NEXT;
+        CASE(MEMCPY) {
             uint32_t n = (uint32_t)RD32();
             uint32_t src = (uint32_t)POP();
             uint32_t dst = (uint32_t)TOP;
             MCHK(src, n);
             MCHK(dst, n);
             memmove(mem + dst, mem + src, n);
-            break;
+            NEXT;
         }
-        case OP_MEMSET: {
+        CASE(MEMSET) {
             uint32_t n = (uint32_t)RD32();
             uint32_t dst = (uint32_t)POP();
             MCHK(dst, n);
             memset(mem + dst, 0, n);
-            break;
+            NEXT;
         }
-        case OP_ADDI: a = RD32(); TOP = (int32_t)((uint32_t)TOP + (uint32_t)a); break;
-        case OP_SYS: {
+        CASE(SYS) {
             int id = (uint16_t)RD16();
             int n = code[pc++];
-            int32_t r;
+            int64_t r;
             if (n > osp) { SYNC(); vm_fail(vm, "internal: missing arguments"); }
             osp -= n;
             SYNC();
-            r = vm_sys(vm, id, ost + osp, n);
+            r = vm_sys(vm, id & 0x7FFF, ost + osp, n);
             LOAD();
-            PUSH(r);
-            break;
+            if (id & 0x8000) PUSH64((uint64_t)r);
+            else PUSH((int32_t)r);
+            NEXT;
         }
-        case OP_INC: {
+        CASE(INC) {
             int mode = code[pc++];
             int32_t d = RD32();
             int32_t old, nw;
@@ -1341,21 +1582,54 @@ static void vm_exec(VM *vm)
                 memcpy(mem + ua, &nw, 4); break;
             case INC_F: MCHK(ua, 4); old = (int32_t)rd32(mem + ua); nw = f2i(i2f(old) + (float)d);
                 memcpy(mem + ua, &nw, 4); break;
-            default: SYNC(); vm_fail(vm, "invalid instruction"); old = nw = 0;
+            default: {
+                /* 64-bit: integer or double */
+                uint64_t o64, n64;
+                MCHK(ua, 8);
+                memcpy(&o64, mem + ua, 8);
+                n64 = (mode & 7) == INC_L ? o64 + (uint64_t)(int64_t)d : d2u(u2d(o64) + (double)d);
+                memcpy(mem + ua, &n64, 8);
+                if (osp >= OSTK) goto ostk_over;
+                la = (mode & INC_POST) ? o64 : n64;
+                ost[osp - 1] = (int32_t)(uint32_t)la;
+                ost[osp++] = (int32_t)(uint32_t)(la >> 32);
+                NEXT;
+            }
             }
             TOP = (mode & INC_POST) ? old : nw;
-            break;
+            NEXT;
         }
-        default:
-            SYNC();
-            vm_fail(vm, "invalid instruction");
-        }
-        continue;
+op_bad:
+bad_op:
+        SYNC();
+        vm_fail(vm, "invalid instruction");
+bad_pc:
+        SYNC();
+        vm_fail(vm, "jump outside the program");
+div_zero:
+        SYNC();
+        vm_fail(vm, "division by zero");
+mod_zero:
+        SYNC();
+        vm_fail(vm, "division by zero (modulo)");
 ostk_over:
         SYNC();
         vm_fail(vm, "expression stack overflow (recursion too deep?)");
+housekeeping:
+        budget = 4096;
+        vm->icount += 4096;
+        if (hal_millis() - vm->last_poll >= 50) {
+            vm->last_poll = hal_millis();
+            SYNC();
+            if (con_poll_break()) vm_fail(vm, "break");
+            con_flush();
+        }
+        opc = pc;
+        if (pc >= csize) goto bad_pc;
+        goto *tab[code[pc++]];
     }
 }
+#undef REC
 
 /* ------------------------------------------------------------------ */
 /* loading                                                             */

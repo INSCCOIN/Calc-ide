@@ -104,6 +104,8 @@
 #define T_FUNC   7
 #define T_STRUCT 8
 #define T_HOLE   9
+#define T_LLONG  10
+#define T_DOUBLE 11
 
 /* symbol kinds */
 #define S_GLOBAL  1
@@ -136,11 +138,14 @@ typedef struct Label Label;
 
 struct Tok {
     int kind;
-    int val;
-    char *str;
+    int val;          /* value, or the low word of a 64-bit one */
+    int hi;           /* high word of a long long / double constant */
+    char *str;        /* string literal, or a number's spelling for # */
     int len;
     Ident *id;
-    int uns;
+    int uns;          /* unsigned integer constant */
+    int lng;          /* TK_NUM: long long; TK_FNUM: double (not float) */
+    int sp;           /* white space before it (for # stringizing) */
 };
 
 struct Type {
@@ -231,6 +236,7 @@ struct Src {
     int tpos;
     Macro *mac;
     int barrier;
+    int col;
     int owned;        /* toks was malloc'd and is freed on pop */
     int conddepth;
     Src *prev;
@@ -342,12 +348,26 @@ Type *ty_ushort;
 Type *ty_int;
 Type *ty_uint;
 Type *ty_float;
+Type *ty_double;
+Type *ty_llong;
+Type *ty_ullong;
 Type *ty_charp;
 
 Ident *id_sys;
 Ident *id_main;
 Ident *id_defined;
 Ident *id_line;
+Ident *id_va_start;
+
+/* error reporting and recovery */
+int tok_line;         /* where the last token read from a file started */
+int tok_col;
+int prev_line;        /* and the one before it */
+int prev_col;
+jmp_buf err_jb;
+int have_jb;
+int keep_spell;       /* record number spellings (macro arguments) */
+int static_init;      /* 1: initializers must be constants (static locals) */
 
 int errors;
 int warnings;
@@ -373,21 +393,98 @@ int cur_line(void)
     return 0;
 }
 
+/* Print the offending source line with a caret under the column. The file
+ * is opened again: this only happens on the error path. */
+void show_source(char *name, int line, int col)
+{
+    FILE *f;
+    char buf[160];
+    char lb[160];
+    int n;
+    int i;
+    int ln = 1;
+    int len = 0;
+    int start;
+    if (name[0] == '<' || line <= 0) return;
+    f = fopen(name, "rb");
+    if (!f) return;
+    while (ln <= line) {
+        n = fread(buf, 1, 160, f);
+        if (n <= 0) break;
+        for (i = 0; i < n && ln <= line; i++) {
+            if (buf[i] == '\n') {
+                ln++;
+            } else if (ln == line && len < 159) {
+                if (buf[i] == '\t') lb[len] = ' ';
+                else if (buf[i] != '\r') lb[len] = buf[i];
+                else len--;
+                len++;
+            }
+        }
+    }
+    fclose(f);
+    lb[len] = 0;
+    /* keep it on one 40-column line: show a window around the column */
+    start = 0;
+    if (col > 26) start = col - 20;
+    if (start > len) start = len;
+    printf(" %4d| %s%.30s\n", line, start ? "..." : "", lb + start);
+    printf("     | %s", start ? "   " : "");
+    for (i = start + 1; i < col && i - start < 31; i++) printf(" ");
+    printf("^\n");
+}
+
+void err_report(char *kind, char *msg, char *arg, int use_prev)
+{
+    int line = tok_line;
+    int col = tok_col;
+    if (use_prev && prev_line > 0) { line = prev_line; col = prev_col; }
+    if (line <= 0) { line = cur_line(); col = 0; }
+    if (arg) printf("%s:%d:%d: %s: %s '%s'\n", cur_name(), line, col, kind, msg, arg);
+    else printf("%s:%d:%d: %s: %s\n", cur_name(), line, col, kind, msg);
+    if (kind[0] == 'e') show_source(cur_name(), line, col);
+}
+
+void recover(void)
+{
+    errors++;
+    if (errors >= 10) {
+        printf("too many errors, stopping\n");
+        exit(1);
+    }
+    if (have_jb) longjmp(err_jb, 1);
+    exit(1);
+}
+
 void error(char *msg)
 {
-    printf("%s:%d: error: %s\n", cur_name(), cur_line(), msg);
-    exit(1);
+    err_report("error", msg, 0, 0);
+    recover();
 }
 
 void error_s(char *msg, char *arg)
 {
-    printf("%s:%d: error: %s '%s'\n", cur_name(), cur_line(), msg, arg);
+    err_report("error", msg, arg, 0);
+    recover();
+}
+
+/* the problem is the token just consumed */
+void error_prev(char *msg, char *arg)
+{
+    err_report("error", msg, arg, 1);
+    recover();
+}
+
+/* not recoverable: internal limits and missing files */
+void fatal(char *msg)
+{
+    err_report("error", msg, 0, 0);
     exit(1);
 }
 
 void warn_s(char *msg, char *arg)
 {
-    printf("%s:%d: warning: %s '%s'\n", cur_name(), cur_line(), msg, arg);
+    err_report("warning", msg, arg, 1);
     warnings++;
 }
 
@@ -400,7 +497,7 @@ char *alloc(int n)
         sz = 16384;
         if (n > sz) sz = n;
         arena_p = malloc(sz);
-        if (!arena_p) error("out of memory");
+        if (!arena_p) fatal("out of memory");
         memset(arena_p, 0, sz);
         arena_left = sz;
         arena_total = arena_total + sz;
@@ -419,7 +516,7 @@ char *grow(char *buf, int *cap, int need)
     if (nc < 16) nc = 16;
     while (nc < need) nc = nc * 2;
     nb = malloc(nc);
-    if (!nb) error("out of memory");
+    if (!nb) fatal("out of memory");
     if (buf) {
         memcpy(nb, buf, *cap);
         free(buf);
@@ -435,7 +532,7 @@ int *grow_ints(int *buf, int *cap, int need)
     if (need <= nc) return buf;
     while (nc < need) nc = nc * 2;
     nb = (int *)malloc(nc * 4);
-    if (!nb) error("out of memory");
+    if (!nb) fatal("out of memory");
     memcpy(nb, buf, *cap * 4);
     free(buf);
     *cap = nc;
@@ -587,7 +684,8 @@ void adv(void)
     if (src->buf[src->pos] == '\n') {
         src->line++;
         src->bol = 1;
-    }
+        src->col = 0;
+    } else src->col++;
     src->pos++;
 }
 
@@ -647,18 +745,34 @@ int lex_escape(void)
 }
 
 char numbuf[64];
+char spellbuf[72];
 
 void lex_number(void)
 {
-    unsigned v = 0;
+    unsigned long long v = 0;
     int c;
     int isf = 0;
     int n = 0;
+    int sn = 0;
+    int dec = 1;
+    int nl = 0;
     float f;
+    double d;
+    int parts[2];
     tok.uns = 0;
+    tok.lng = 0;
+    tok.hi = 0;
     if (sc(0) == '0' && (sc(1) == 'x' || sc(1) == 'X')) {
+        dec = 0;
+        spellbuf[0] = '0';
+        spellbuf[1] = sc(1);
+        sn = 2;
         adv(); adv();
-        while (hexval(sc(0)) >= 0) { v = v * 16 + hexval(sc(0)); adv(); }
+        while (hexval(sc(0)) >= 0) {
+            v = v * 16 + hexval(sc(0));
+            if (sn < 60) { spellbuf[sn] = sc(0); sn++; }
+            adv();
+        }
     } else {
         /* collect the spelling, then decide integer or float */
         while (1) {
@@ -675,14 +789,32 @@ void lex_number(void)
             adv();
         }
         numbuf[n] = 0;
-        if (sc(0) == 'f' || sc(0) == 'F') { isf = 1; adv(); }
-        if (isf) {
-            f = atof(numbuf);
+        memcpy(spellbuf, numbuf, n);
+        sn = n;
+        if (sc(0) == 'f' || sc(0) == 'F') {
+            spellbuf[sn] = sc(0);
+            sn++;
+            adv();
+            spellbuf[sn] = 0;
+            f = strtof(numbuf, 0);
             memcpy(&tok.val, &f, 4);
             tok.kind = TK_FNUM;
+            if (keep_spell) tok.str = str_dup(spellbuf, sn);
+            return;
+        }
+        if (isf) {
+            if (sc(0) == 'l' || sc(0) == 'L') { spellbuf[sn] = sc(0); sn++; adv(); }
+            d = atof(numbuf);
+            memcpy(parts, &d, 8);
+            tok.val = parts[0];
+            tok.hi = parts[1];
+            tok.lng = 1;
+            tok.kind = TK_FNUM;
+            if (keep_spell) tok.str = str_dup(spellbuf, sn);
             return;
         }
         if (numbuf[0] == '0') {
+            dec = 0;
             for (n = 1; numbuf[n]; n++) v = v * 8 + numbuf[n] - '0';
         } else {
             for (n = 0; numbuf[n]; n++) v = v * 10 + numbuf[n] - '0';
@@ -690,10 +822,17 @@ void lex_number(void)
     }
     while (sc(0) == 'u' || sc(0) == 'U' || sc(0) == 'l' || sc(0) == 'L') {
         if (sc(0) == 'u' || sc(0) == 'U') tok.uns = 1;
+        else nl++;
+        if (sn < 70) { spellbuf[sn] = sc(0); sn++; }
         adv();
     }
+    /* the type: int, unsigned, or long long when it does not fit */
+    if (nl >= 2 || v > 0xFFFFFFFFull || (dec && !tok.uns && v > 0x7FFFFFFFull)) tok.lng = 1;
+    else if (v > 0x7FFFFFFFull) tok.uns = 1;
     tok.kind = TK_NUM;
-    tok.val = v;
+    tok.val = (int)(v & 0xFFFFFFFFull);
+    tok.hi = (int)(v >> 32);
+    if (keep_spell) tok.str = str_dup(spellbuf, sn);
 }
 
 char *sbuf;
@@ -730,31 +869,37 @@ int lex_chars(void)
     int c;
     int start;
     int d;
+    int white = 0;
+    int cstart;
     while (1) {
         c = sc(0);
         if (c < 0) return 0;
         if (c == '\n') {
             adv();
+            white = 1;
             if (stop_nl) { tok.kind = TK_NL; return 1; }
             continue;
         }
-        if (c == ' ' || c == '\t' || c == '\r' || c == 12 || c == 11) { adv(); continue; }
+        if (c == ' ' || c == '\t' || c == '\r' || c == 12 || c == 11) { adv(); white = 1; continue; }
         if (c == '\\' && (sc(1) == '\n' || sc(1) == '\r')) {
             adv();
             if (sc(0) == '\r') adv();
             adv();
             src->bol = 0;
+            white = 1;
             continue;
         }
         if (two('/', '/') || two('#', '#')) {
             while (sc(0) >= 0 && sc(0) != '\n') adv();
+            white = 1;
             continue;
         }
         if (two('/', '*')) {
             adv(); adv();
             while (sc(0) >= 0 && !two('*', '/')) adv();
-            if (sc(0) < 0) error("unterminated comment");
+            if (sc(0) < 0) fatal("unterminated comment");
             adv(); adv();
+            white = 1;
             continue;
         }
         if (c == '#' && src->bol && !stop_nl) {
@@ -765,6 +910,15 @@ int lex_chars(void)
             continue;
         }
         src->bol = 0;
+        prev_line = tok_line;
+        prev_col = tok_col;
+        tok_line = src->line;
+        tok_col = src->col + 1;
+        tok.sp = white;
+        tok.hi = 0;
+        tok.lng = 0;
+        tok.uns = 0;
+        tok.str = 0;
         if (is_id1(c)) {
             start = src->pos;
             /* identifiers never straddle a refill: make sure it is buffered */
@@ -778,12 +932,14 @@ int lex_chars(void)
         if (is_dig(c) || (c == '.' && is_dig(sc(1)))) { lex_number(); return 1; }
         if (c == '"') { lex_string(); return 1; }
         if (c == '\'') {
+            cstart = src->pos;
             adv();
             c = sc(0);
             if (c == '\\') { adv(); c = lex_escape(); }
             else adv();
             if (sc(0) != '\'') error("bad character constant");
             adv();
+            if (keep_spell && src->pos > cstart && src->pos - cstart < 12) tok.str = str_dup(src->buf + cstart, src->pos - cstart);
             tok.kind = TK_NUM;
             tok.val = c;
             if (c > 127) tok.val = c - 256;
@@ -871,7 +1027,7 @@ Tok *mbuf_grow(Tok *t, int *cap, int need)
     if (nc < 8) nc = 8;
     while (nc < need) nc = nc * 2;
     nt = (Tok *)malloc(nc * sizeof(Tok));
-    if (!nt) error("out of memory");
+    if (!nt) fatal("out of memory");
     if (t) {
         memcpy(nt, t, *cap * sizeof(Tok));
         free(t);
@@ -923,9 +1079,58 @@ Tok *expand_list(Tok *in, int n, int *outn)
 }
 
 /* returns 1 if the macro was expanded (its tokens are now the source) */
+/* the text of a token, for # stringizing */
+char *op_spell[] = {"==", "!=", "<=", ">=", "<<", ">>", "&&", "||", "++", "--", "->",
+                    "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=", "..."};
+
+int spell_tok(Tok *t, char *out, int n, int cap)
+{
+    char tmp[48];
+    char *p = tmp;
+    int i;
+    int c;
+    tmp[0] = 0;
+    if (t->kind == TK_ID) p = t->id->name;
+    else if ((t->kind == TK_NUM || t->kind == TK_FNUM) && t->str) p = t->str;
+    else if (t->kind == TK_NUM) sprintf(tmp, "%d", t->val);
+    else if (t->kind == TK_FNUM) strcpy(tmp, "0.0");
+    else if (t->kind == TK_STR) {
+        if (n < cap) { out[n] = '"'; n++; }
+        for (i = 0; i < t->len; i++) {
+            c = t->str[i] & 255;
+            if ((c == '"' || c == '\\') && n + 1 < cap) { out[n] = '\\'; n++; }
+            if (c == 10 && n + 1 < cap) { out[n] = '\\'; out[n + 1] = 'n'; n = n + 2; continue; }
+            if (n < cap) { out[n] = c; n++; }
+        }
+        if (n < cap) { out[n] = '"'; n++; }
+        return n;
+    } else if (t->kind >= TK_EQ && t->kind <= TK_ELLIPSIS) p = op_spell[t->kind - TK_EQ];
+    else if (t->kind < 128) { tmp[0] = t->kind; tmp[1] = 0; }
+    for (i = 0; p[i] && n < cap; i++) { out[n] = p[i]; n++; }
+    return n;
+}
+
+Tok stringize(Tok *a, int na)
+{
+    char buf[256];
+    int n = 0;
+    int i;
+    Tok t;
+    for (i = 0; i < na; i++) {
+        if (i > 0 && a[i].sp && n < 255) { buf[n] = ' '; n++; }
+        n = spell_tok(&a[i], buf, n, 255);
+    }
+    memset(&t, 0, sizeof(Tok));
+    t.kind = TK_STR;
+    t.str = str_dup(buf, n);
+    t.len = n;
+    return t;
+}
+
 int expand_macro(Ident *id)
 {
     Macro *m = id->macro;
+    Tok *raw[16];
     Tok *args[16];
     int nargs[16];
     int acap[16];
@@ -956,8 +1161,9 @@ int expand_macro(Ident *id)
         tok = idtok;
         return 0;
     }
-    for (i = 0; i < 16; i++) { args[i] = 0; nargs[i] = 0; acap[i] = 0; }
+    for (i = 0; i < 16; i++) { args[i] = 0; nargs[i] = 0; acap[i] = 0; raw[i] = 0; }
     na = 0;
+    keep_spell = 1;
     lex_raw();
     if (tok.kind != ')' || m->nparams > 0) {
         na = 1;
@@ -979,17 +1185,31 @@ int expand_macro(Ident *id)
             lex_raw();
         }
     }
+    keep_spell = 0;
     if (na != m->nparams) error_s("wrong number of arguments to macro", id->name);
-    /* pre-expand the arguments, then substitute */
+    /* pre-expand the arguments (keeping the raw ones for #), then substitute */
+    int rawn[16];
     for (i = 0; i < na; i++) {
         ex = expand_list(args[i], nargs[i], &nex);
-        free(args[i]);
+        raw[i] = args[i];
+        rawn[i] = nargs[i];
         args[i] = ex;
         nargs[i] = nex;
     }
     for (i = 0; i < m->nbody; i++) {
         t = m->body[i];
         k = -1;
+        if (t.kind == '#' && i + 1 < m->nbody && m->body[i + 1].kind == TK_ID) {
+            for (j = 0; j < m->nparams; j++)
+                if (m->params[j] == m->body[i + 1].id) k = j;
+            if (k >= 0) {
+                out = mbuf_grow(out, &cap, cnt + 1);
+                out[cnt] = stringize(raw[k], rawn[k]);
+                cnt++;
+                i++;
+                continue;
+            }
+        }
         if (t.kind == TK_ID)
             for (j = 0; j < m->nparams; j++)
                 if (m->params[j] == t.id) k = j;
@@ -1005,7 +1225,7 @@ int expand_macro(Ident *id)
             cnt++;
         }
     }
-    for (i = 0; i < na; i++) free(args[i]);
+    for (i = 0; i < na; i++) { free(args[i]); free(raw[i]); }
     push_toks(out, cnt, m, 0);
     src->owned = 1;
     return 1;
@@ -1407,7 +1627,20 @@ void peek(void)
 
 void expect(int k, char *what)
 {
-    if (tok.kind != k) error_s("expected", what);
+    if (tok.kind != k) {
+        /* a ';' missing at the end of a line: report it and carry on as if
+         * it were there, which keeps the following lines checkable */
+        if (k == ';' && prev_line > 0 && tok_line > prev_line) {
+            err_report("error", "expected ';' at the end of the line", 0, 1);
+            errors++;
+            if (errors >= 10) {
+                printf("too many errors, stopping\n");
+                exit(1);
+            }
+            return;
+        }
+        error_s("expected", what);
+    }
     next();
 }
 
@@ -1454,12 +1687,17 @@ Type *array_of(Type *b, int n)
 
 int is_int(Type *t)
 {
-    return t->kind == T_CHAR || t->kind == T_SHORT || t->kind == T_INT;
+    return t->kind == T_CHAR || t->kind == T_SHORT || t->kind == T_INT || t->kind == T_LLONG;
+}
+
+int is_flt(Type *t)
+{
+    return t->kind == T_FLOAT || t->kind == T_DOUBLE;
 }
 
 int is_arith(Type *t)
 {
-    return is_int(t) || t->kind == T_FLOAT;
+    return is_int(t) || is_flt(t);
 }
 
 int is_ptr(Type *t)
@@ -1470,6 +1708,30 @@ int is_ptr(Type *t)
 int is_scalar(Type *t)
 {
     return is_arith(t) || t->kind == T_PTR;
+}
+
+/* stack cells a value of this type occupies */
+int tcells(Type *t)
+{
+    if (t->kind == T_LLONG || t->kind == T_DOUBLE) return 2;
+    return 1;
+}
+
+/* value classes for conversions */
+#define C_I32 0
+#define C_U32 1
+#define C_I64 2
+#define C_U64 3
+#define C_F32 4
+#define C_F64 5
+
+int tclass(Type *t)
+{
+    if (t->kind == T_LLONG) { if (t->uns) return C_U64; return C_I64; }
+    if (t->kind == T_FLOAT) return C_F32;
+    if (t->kind == T_DOUBLE) return C_F64;
+    if (t->kind == T_PTR || (t->kind == T_INT && t->uns)) return C_U32;
+    return C_I32;
 }
 
 int elem_size(Type *t)
@@ -1483,6 +1745,10 @@ int elem_size(Type *t)
 /* ------------------------------------------------------------------ */
 /* code emission                                                       */
 /* ------------------------------------------------------------------ */
+
+int last_op_pos = -1;  /* where the last plain opcode was emitted */
+int last_op;
+int addr_at = -1;      /* end of the last relocated address, for LGW */
 
 void need_code(int n)
 {
@@ -1528,12 +1794,14 @@ void out4(int v)
 
 int get4(int pos)
 {
+    if (pos < 0 || pos + 4 > cpos) return 0;
     return (code[pos] & 255) | ((code[pos + 1] & 255) << 8)
          | ((code[pos + 2] & 255) << 16) | ((code[pos + 3] & 255) << 24);
 }
 
 void put4(int pos, int v)
 {
+    if (pos < 0 || pos + 4 > cpos) return;
     code[pos] = v & 255;
     code[pos + 1] = (v >> 8) & 255;
     code[pos + 2] = (v >> 16) & 255;
@@ -1545,12 +1813,15 @@ void op(int o)
 {
     hist_clear();
     last_was_lea = -1;
+    last_op_pos = cpos;
+    last_op = o;
     out1(o);
 }
 
 void op4(int o, int v)
 {
     hist_clear();
+    last_op_pos = -1;
     out1(o);
     out4(v);
 }
@@ -1559,10 +1830,17 @@ void op4(int o, int v)
 void emit_imm(int v)
 {
     int at = cpos;
+    last_op_pos = -1;
     if (v >= -128 && v <= 127) { out1(OP_IMM8); out1(v & 255); }
     else if (v >= -32768 && v <= 32767) { out1(OP_IMM16); out2(v); }
     else { out1(OP_IMM); out4(v); }
     hist_push(at);
+}
+
+void emit_imm64(int lo, int hi)
+{
+    emit_imm(lo);
+    emit_imm(hi);
 }
 
 int imm_value(int pos)
@@ -1582,10 +1860,15 @@ int imm_value(int pos)
     return get4(pos + 1);
 }
 
-/* is the code from 'start' exactly one foldable constant? */
+/* is the code from 'start' exactly one (or, for 64-bit, two) constants? */
 int is_const_since(int start)
 {
     return nhist >= 1 && hist_pos[nhist - 1] == start;
+}
+
+int is_const2_since(int start)
+{
+    return nhist >= 2 && hist_pos[nhist - 2] == start;
 }
 
 /* an address that must be relocated: never folded */
@@ -1593,11 +1876,13 @@ void emit_addr(int seg, int off)
 {
     hist_clear();
     last_was_lea = -1;
+    last_op_pos = -1;
     relocs = grow_ints(relocs, &rcap, nrelocs + 1);
     out1(OP_IMM);
     relocs[nrelocs] = cpos * 4 + seg;
     nrelocs++;
     out4(off);
+    addr_at = cpos;
 }
 
 float bits_f(int b)
@@ -1614,50 +1899,135 @@ int f_bits(float f)
     return b;
 }
 
+double bits_d(unsigned long long u)
+{
+    double d;
+    memcpy(&d, &u, 8);
+    return d;
+}
+
+unsigned long long d_bits(double d)
+{
+    unsigned long long u;
+    memcpy(&u, &d, 8);
+    return u;
+}
+
+/* float/double to integer, saturating like the VM */
+int f_to_i(double d, int uns)
+{
+    if (d != d) return 0;
+    if (uns) {
+        if (d <= 0) return 0;
+        if (d >= 4294967295.0) return -1;
+        return (int)(unsigned)d;
+    }
+    if (d >= 2147483647.0) return 2147483647;
+    if (d <= -2147483648.0) return INT_MIN;
+    return (int)d;
+}
+
+unsigned long long d_to_l(double d, int uns)
+{
+    if (d != d) return 0;
+    if (uns) {
+        if (d <= 0) return 0;
+        if (d >= 1.8446744073709552e19) return ~0ull;
+        return (unsigned long long)d;
+    }
+    if (d >= 9.2233720368547758e18) return 0x7FFFFFFFFFFFFFFFull;
+    if (d <= -9.2233720368547758e18) return 0x8000000000000000ull;
+    return (unsigned long long)(long long)d;
+}
+
+/* replace the last n history constants with new ones */
+void refold(int n, int *vals, int nv)
+{
+    int i;
+    cpos = hist_pos[nhist - n];
+    nhist = nhist - n;
+    for (i = 0; i < nv; i++) emit_imm(vals[i]);
+}
+
+unsigned long long hist64(int k)
+{
+    /* the 64-bit constant whose low word is history entry k */
+    return ((unsigned long long)(unsigned)imm_value(hist_pos[k + 1]) << 32) | (unsigned)imm_value(hist_pos[k]);
+}
+
 /* fold a unary operation on the last constant */
 int fold1(int o)
 {
-    unsigned ua;
-    int p;
     int a;
-    int r;
-    if (nhist < 1) return 0;
-    p = hist_pos[nhist - 1];
-    if (p + 1 > cpos) return 0;
-    a = imm_value(p);
-    if (o == OP_NEG) r = 0u - (unsigned)a;
-    else if (o == OP_NOT) r = ~a;
-    else if (o == OP_LNOT) r = !a;
-    else if (o == OP_FNEG) r = a ^ 0x80000000;
-    else if (o == OP_ITOF) r = f_bits((float)a);
-    else if (o == OP_UTOF) r = f_bits((float)(unsigned)a);
-    else if (o == OP_FTOI) r = (int)bits_f(a);
-    else if (o == OP_FTOU) r = (int)(unsigned)bits_f(a);
-    else if (o == OP_SEXT8) { r = a & 255; if (r > 127) r = r - 256; }
-    else if (o == OP_ZEXT8) r = a & 255;
-    else if (o == OP_SEXT16) { r = a & 65535; if (r > 32767) r = r - 65536; }
-    else if (o == OP_ZEXT16) r = a & 65535;
-    else return 0;
-    nhist--;
-    cpos = p;
-    emit_imm(r);
+    int r[2];
+    unsigned long long u;
+    double d;
+    int n = 1;
+    int nv = 1;
+    if (o == OP_I2L || o == OP_U2L || o == OP_I2D || o == OP_U2D || o == OP_F2D) nv = 2;
+    if (o == OP_L2I || o == OP_L2B || o == OP_D2B || o == OP_L2D || o == OP_UL2D || o == OP_D2F || o == OP_D2I
+        || o == OP_D2U || o == OP_D2L || o == OP_D2UL || o == OP_LNEG || o == OP_LCOM || o == OP_DNEG) n = 2;
+    if (nhist < n) return 0;
+    if (n == 2) {
+        u = hist64(nhist - 2);
+        d = bits_d(u);
+        if (o == OP_L2I) { r[0] = (int)(u & 0xFFFFFFFFull); nv = 1; }
+        else if (o == OP_L2B) { r[0] = u != 0; nv = 1; }
+        else if (o == OP_D2B) { r[0] = d != 0; nv = 1; }
+        else if (o == OP_D2F) { r[0] = f_bits((float)d); nv = 1; }
+        else if (o == OP_D2I) { r[0] = f_to_i(d, 0); nv = 1; }
+        else if (o == OP_D2U) { r[0] = f_to_i(d, 1); nv = 1; }
+        else {
+            if (o == OP_L2D) u = d_bits((double)(long long)u);
+            else if (o == OP_UL2D) u = d_bits((double)u);
+            else if (o == OP_D2L) u = d_to_l(d, 0);
+            else if (o == OP_D2UL) u = d_to_l(d, 1);
+            else if (o == OP_LNEG) u = 0 - u;
+            else if (o == OP_LCOM) u = ~u;
+            else u = u ^ 0x8000000000000000ull;
+            r[0] = (int)(u & 0xFFFFFFFFull);
+            r[1] = (int)(u >> 32);
+            nv = 2;
+        }
+        refold(2, r, nv);
+        return 1;
+    }
+    a = imm_value(hist_pos[nhist - 1]);
+    if (o == OP_NEG) r[0] = 0u - (unsigned)a;
+    else if (o == OP_NOT) r[0] = ~a;
+    else if (o == OP_LNOT) r[0] = !a;
+    else if (o == OP_FNEG) r[0] = a ^ 0x80000000;
+    else if (o == OP_ITOF) r[0] = f_bits((float)a);
+    else if (o == OP_UTOF) r[0] = f_bits((float)(unsigned)a);
+    else if (o == OP_FTOI) r[0] = f_to_i(bits_f(a), 0);
+    else if (o == OP_FTOU) r[0] = f_to_i(bits_f(a), 1);
+    else if (o == OP_SEXT8) { r[0] = a & 255; if (r[0] > 127) r[0] = r[0] - 256; }
+    else if (o == OP_ZEXT8) r[0] = a & 255;
+    else if (o == OP_SEXT16) { r[0] = a & 65535; if (r[0] > 32767) r[0] = r[0] - 65536; }
+    else if (o == OP_ZEXT16) r[0] = a & 65535;
+    else if (nv == 2) {
+        if (o == OP_I2L) u = (unsigned long long)(long long)a;
+        else if (o == OP_U2L) u = (unsigned)a;
+        else if (o == OP_I2D) u = d_bits((double)a);
+        else if (o == OP_U2D) u = d_bits((double)(unsigned)a);
+        else u = d_bits((double)bits_f(a));
+        r[0] = (int)(u & 0xFFFFFFFFull);
+        r[1] = (int)(u >> 32);
+    } else return 0;
+    refold(1, r, nv);
     return 1;
 }
 
 int fold2(int o)
 {
-    int p1;
-    int p2;
     int a;
     int b;
     int r;
     unsigned ua;
     unsigned ub;
     if (nhist < 2) return 0;
-    p1 = hist_pos[nhist - 2];
-    p2 = hist_pos[nhist - 1];
-    a = imm_value(p1);
-    b = imm_value(p2);
+    a = imm_value(hist_pos[nhist - 2]);
+    b = imm_value(hist_pos[nhist - 1]);
     ua = a;
     ub = b;
     if (o == OP_ADD) r = ua + ub;
@@ -1686,39 +2056,112 @@ int fold2(int o)
     else if (o == OP_FADD) r = f_bits(bits_f(a) + bits_f(b));
     else if (o == OP_FSUB) r = f_bits(bits_f(a) - bits_f(b));
     else if (o == OP_FMUL) r = f_bits(bits_f(a) * bits_f(b));
-    else if (o == OP_FDIV) { if (b == 0 || b == 0x80000000) return 0; r = f_bits(bits_f(a) / bits_f(b)); }
-    else if (o == OP_ITOF2) r = 0;
+    else if (o == OP_FDIV) r = f_bits(bits_f(a) / bits_f(b));
+    else if (o == OP_FEQ) r = bits_f(a) == bits_f(b);
+    else if (o == OP_FNE) r = bits_f(a) != bits_f(b);
+    else if (o == OP_FLT) r = bits_f(a) < bits_f(b);
+    else if (o == OP_FLE) r = bits_f(a) <= bits_f(b);
+    else if (o == OP_FGT) r = bits_f(a) > bits_f(b);
+    else if (o == OP_FGE) r = bits_f(a) >= bits_f(b);
     else return 0;
-    if (o == OP_ITOF2) {
-        /* convert the lower of the two constants in place */
-        a = f_bits((float)a);
-        nhist = nhist - 2;
-        cpos = p1;
-        emit_imm(a);
-        emit_imm(b);
+    refold(2, &r, 1);
+    return 1;
+}
+
+/* 64-bit binary operators: two constants of two cells each */
+int fold64(int o)
+{
+    unsigned long long a;
+    unsigned long long b;
+    unsigned long long u;
+    double x;
+    double y;
+    int r[2];
+    int nv = 2;
+    int n;
+    if (o == OP_LSHL || o == OP_LSHR || o == OP_LSAR) {
+        if (nhist < 3) return 0;
+        a = hist64(nhist - 3);
+        n = imm_value(hist_pos[nhist - 1]) & 63;
+        if (o == OP_LSHL) u = a << n;
+        else if (o == OP_LSHR) u = a >> n;
+        else u = (unsigned long long)((long long)a >> n);
+        r[0] = (int)(u & 0xFFFFFFFFull);
+        r[1] = (int)(u >> 32);
+        refold(3, r, 2);
         return 1;
     }
-    nhist = nhist - 2;
-    cpos = p1;
-    emit_imm(r);
+    if (nhist < 4) return 0;
+    a = hist64(nhist - 4);
+    b = hist64(nhist - 2);
+    x = bits_d(a);
+    y = bits_d(b);
+    if (o == OP_LADD) u = a + b;
+    else if (o == OP_LSUB) u = a - b;
+    else if (o == OP_LMUL) u = a * b;
+    else if (o == OP_LDIV) { if (b == 0 || b == ~0ull) return 0; u = (unsigned long long)((long long)a / (long long)b); }
+    else if (o == OP_LMOD) { if (b == 0 || b == ~0ull) return 0; u = (unsigned long long)((long long)a % (long long)b); }
+    else if (o == OP_LDIVU) { if (b == 0) return 0; u = a / b; }
+    else if (o == OP_LMODU) { if (b == 0) return 0; u = a % b; }
+    else if (o == OP_LAND) u = a & b;
+    else if (o == OP_LOR) u = a | b;
+    else if (o == OP_LXOR) u = a ^ b;
+    else if (o == OP_DADD) u = d_bits(x + y);
+    else if (o == OP_DSUB) u = d_bits(x - y);
+    else if (o == OP_DMUL) u = d_bits(x * y);
+    else if (o == OP_DDIV) u = d_bits(x / y);
+    else {
+        nv = 1;
+        if (o == OP_LEQ) r[0] = a == b;
+        else if (o == OP_LNE) r[0] = a != b;
+        else if (o == OP_LLT) r[0] = (long long)a < (long long)b;
+        else if (o == OP_LLE) r[0] = (long long)a <= (long long)b;
+        else if (o == OP_LGT) r[0] = (long long)a > (long long)b;
+        else if (o == OP_LGE) r[0] = (long long)a >= (long long)b;
+        else if (o == OP_LLTU) r[0] = a < b;
+        else if (o == OP_LLEU) r[0] = a <= b;
+        else if (o == OP_LGTU) r[0] = a > b;
+        else if (o == OP_LGEU) r[0] = a >= b;
+        else if (o == OP_DEQ) r[0] = x == y;
+        else if (o == OP_DNE) r[0] = x != y;
+        else if (o == OP_DLT) r[0] = x < y;
+        else if (o == OP_DLE) r[0] = x <= y;
+        else if (o == OP_DGT) r[0] = x > y;
+        else if (o == OP_DGE) r[0] = x >= y;
+        else return 0;
+    }
+    if (nv == 2) {
+        r[0] = (int)(u & 0xFFFFFFFFull);
+        r[1] = (int)(u >> 32);
+    }
+    refold(4, r, nv);
     return 1;
 }
 
 int is_fold1(int o)
 {
     return o == OP_NEG || o == OP_NOT || o == OP_LNOT || o == OP_FNEG
-        || (o >= OP_ITOF && o <= OP_FTOU) || (o >= OP_SEXT8 && o <= OP_ZEXT16);
+        || (o >= OP_ITOF && o <= OP_FTOU) || (o >= OP_SEXT8 && o <= OP_ZEXT16)
+        || (o >= OP_I2L && o <= OP_D2B) || o == OP_LNEG || o == OP_LCOM || o == OP_DNEG;
 }
 
 /* emit an operator, folding it if its operands are constants */
 void emit_op(int o)
 {
+    int v;
     if (is_fold1(o)) {
         if (fold1(o)) return;
-    } else if (o == OP_ITOF2 || o == OP_UTOF2) {
-        if (o == OP_ITOF2 && fold2(o)) return;
-    } else if (o >= OP_ADD && o <= OP_FDIV && o != OP_NEG && o != OP_NOT && o != OP_LNOT && o != OP_FNEG) {
+    } else if (o >= OP_ADD && o <= OP_FGE) {
         if (fold2(o)) return;
+        /* x + constant: one instruction */
+        if (o == OP_ADD && nhist >= 1 && hist_pos[nhist - 1] < cpos) {
+            v = imm_value(hist_pos[nhist - 1]);
+            cpos = hist_pos[nhist - 1];
+            op4(OP_ADDI, v);
+            return;
+        }
+    } else if (o >= OP_LADD && o <= OP_DGE) {
+        if (fold64(o)) return;
     }
     op(o);
 }
@@ -1726,14 +2169,40 @@ void emit_op(int o)
 int here(void)
 {
     hist_clear();     /* a jump may land here */
+    last_op_pos = -1;
+    addr_at = -1;
+    last_was_lea = -1;
     return cpos;
 }
 
-/* emit a jump-like instruction whose operand is a patch chain link */
+/* emit a jump-like instruction whose operand is a patch chain link;
+ * a comparison followed by JZ/JNZ becomes one compare-and-branch */
 int emit_jump(int o, int chain)
 {
     int at;
+    int k = -1;
+    if ((o == OP_JZ || o == OP_JNZ) && last_op_pos >= 0 && last_op_pos == cpos - 1
+        && last_op >= OP_EQ && last_op <= OP_GE) {
+        k = last_op;
+        cpos--;
+        if (o == OP_JNZ) {
+            if (k == OP_EQ) o = OP_JEQ;
+            else if (k == OP_NE) o = OP_JNE;
+            else if (k == OP_LT) o = OP_JLT;
+            else if (k == OP_LE) o = OP_JLE;
+            else if (k == OP_GT) o = OP_JGT;
+            else o = OP_JGE;
+        } else {
+            if (k == OP_EQ) o = OP_JNE;
+            else if (k == OP_NE) o = OP_JEQ;
+            else if (k == OP_LT) o = OP_JGE;
+            else if (k == OP_LE) o = OP_JGT;
+            else if (k == OP_GT) o = OP_JLE;
+            else o = OP_JLT;
+        }
+    }
     op(o);
+    last_op_pos = -1;
     at = cpos;
     out4(chain);
     return at;
@@ -1742,10 +2211,13 @@ int emit_jump(int o, int chain)
 void patch_chain(int chain, int target)
 {
     int nx;
-    while (chain) {
+    int guard = 0;
+    if (errors) return;      /* after an error the code is never written */
+    while (chain && guard < 1000000) {
         nx = get4(chain);
         put4(chain, target);
         chain = nx;
+        guard++;
     }
 }
 
@@ -1753,6 +2225,7 @@ void emit_lea(int off)
 {
     if (off >= -32768 && off <= 32767) { op(OP_LEA); out2(off); }
     else op4(OP_LEA32, off);
+    last_op_pos = -1;
 }
 
 void emit_load(Type *t)
@@ -1760,14 +2233,22 @@ void emit_load(Type *t)
     if (t->kind == T_CHAR) { if (t->uns) op(OP_LDBU); else op(OP_LDB); }
     else if (t->kind == T_SHORT) { if (t->uns) op(OP_LDHU); else op(OP_LDH); }
     else if (t->kind == T_INT || t->kind == T_FLOAT || t->kind == T_PTR) {
-        /* fuse LEA + LDW */
+        /* fuse LEA + LDW, and global address + LDW */
         if (last_was_lea >= 0 && last_was_lea == cpos - 3 && (code[cpos - 3] & 255) == OP_LEA && nhist == 0) {
             code[cpos - 3] = OP_LLW;
             last_was_lea = -1;
+            last_op_pos = -1;
+            return;
+        }
+        if (addr_at == cpos && (code[cpos - 5] & 255) == OP_IMM) {
+            code[cpos - 5] = OP_LGW;
+            addr_at = -1;
+            last_op_pos = -1;
             return;
         }
         op(OP_LDW);
     }
+    else if (t->kind == T_LLONG || t->kind == T_DOUBLE) op(OP_LDD);
     else if (t->kind == T_VOID) error("void value used");
     else error("cannot load this type");
 }
@@ -1777,7 +2258,78 @@ void emit_store(Type *t)
     if (t->kind == T_CHAR) op(OP_STB);
     else if (t->kind == T_SHORT) op(OP_STH);
     else if (t->kind == T_INT || t->kind == T_FLOAT || t->kind == T_PTR) op(OP_STW);
+    else if (t->kind == T_LLONG || t->kind == T_DOUBLE) op(OP_STD);
     else error("cannot assign this type");
+}
+
+/* discard a value; a store whose result is unused becomes store-and-pop */
+void emit_pop(Type *t)
+{
+    int n = tcells(t);
+    if (t->kind == T_STRUCT || t->kind == T_ARRAY || t->kind == T_FUNC) n = 1;
+    if (last_op_pos >= 0 && last_op_pos == cpos - 1) {
+        if (last_op == OP_STW) { code[cpos - 1] = OP_STWP; last_op_pos = -1; return; }
+        if (last_op == OP_STB) { code[cpos - 1] = OP_STBP; last_op_pos = -1; return; }
+        if (last_op == OP_STH) { code[cpos - 1] = OP_STHP; last_op_pos = -1; return; }
+        if (last_op == OP_STD) { code[cpos - 1] = OP_STDP; last_op_pos = -1; return; }
+    }
+    while (n > 0) {
+        op(OP_POP);
+        n--;
+    }
+}
+
+/* the conversion instructions from one type to another (at most two) */
+int conv_seq(Type *from, Type *to, int *ops)
+{
+    int f = tclass(from);
+    int t = tclass(to);
+    int n = 0;
+    if (to->kind == T_VOID || from == to) return 0;
+    if ((to->kind == T_STRUCT || from->kind == T_STRUCT)) {
+        if (to != from) error("incompatible struct types");
+        return 0;
+    }
+    if (is_flt(to) && from->kind == T_PTR) error("cannot convert a pointer to floating point");
+    if (to->kind == T_PTR && is_flt(from)) error("cannot convert floating point to a pointer");
+    if (t == C_I32 || t == C_U32) {
+        if (f == C_I64 || f == C_U64) { ops[n] = OP_L2I; n++; }
+        else if (f == C_F32) { if (t == C_U32 && to->kind == T_INT) ops[n] = OP_FTOU; else ops[n] = OP_FTOI; n++; }
+        else if (f == C_F64) { if (t == C_U32 && to->kind == T_INT) ops[n] = OP_D2U; else ops[n] = OP_D2I; n++; }
+    } else if (t == C_I64 || t == C_U64) {
+        if (f == C_I32) { ops[n] = OP_I2L; n++; }
+        else if (f == C_U32) { ops[n] = OP_U2L; n++; }
+        else if (f == C_F32) { ops[n] = OP_F2D; ops[n + 1] = OP_D2L; if (t == C_U64) ops[n + 1] = OP_D2UL; n = n + 2; }
+        else if (f == C_F64) { if (t == C_U64) ops[n] = OP_D2UL; else ops[n] = OP_D2L; n++; }
+    } else if (t == C_F32) {
+        if (f == C_I32) { ops[n] = OP_ITOF; n++; }
+        else if (f == C_U32) { ops[n] = OP_UTOF; n++; }
+        else if (f == C_I64) { ops[n] = OP_L2D; ops[n + 1] = OP_D2F; n = n + 2; }
+        else if (f == C_U64) { ops[n] = OP_UL2D; ops[n + 1] = OP_D2F; n = n + 2; }
+        else if (f == C_F64) { ops[n] = OP_D2F; n++; }
+    } else {
+        if (f == C_I32) { ops[n] = OP_I2D; n++; }
+        else if (f == C_U32) { ops[n] = OP_U2D; n++; }
+        else if (f == C_I64) { ops[n] = OP_L2D; n++; }
+        else if (f == C_U64) { ops[n] = OP_UL2D; n++; }
+        else if (f == C_F32) { ops[n] = OP_F2D; n++; }
+    }
+    return n;
+}
+
+/* convert the value under the top 'cells' cells */
+void convert_under(Type *from, Type *to, int cells)
+{
+    int ops[2];
+    int n = conv_seq(from, to, ops);
+    int i;
+    for (i = 0; i < n; i++) {
+        hist_clear();
+        last_op_pos = -1;
+        out1(OP_CVTU);
+        out1(ops[i]);
+        out1(cells);
+    }
 }
 
 void emit_line(void)
@@ -2079,6 +2631,7 @@ Type *declspec(void)
     int uns = 0;
     int sgn = 0;
     int nfloat = 0;
+    int ndouble = 0;
     int nvoid = 0;
     Type *t = 0;
     int k;
@@ -2097,7 +2650,8 @@ Type *declspec(void)
         else if (k == KW_LONG) nlong++;
         else if (k == KW_UNSIGNED) uns = 1;
         else if (k == KW_SIGNED) sgn = 1;
-        else if (k == KW_FLOAT || k == KW_DOUBLE) nfloat++;
+        else if (k == KW_FLOAT) nfloat++;
+        else if (k == KW_DOUBLE) ndouble++;
         else if (k == KW_VOID) nvoid++;
         else if (k == KW_BOOL) nint++;
         else if (k == KW_STRUCT || k == KW_UNION) {
@@ -2109,16 +2663,18 @@ Type *declspec(void)
             t = enum_decl();
             continue;
         } else if (k == TK_ID && tok.id->sym && tok.id->sym->kind == S_TYPEDEF
-                   && !t && !nint && !nchar && !nshort && !nlong && !uns && !sgn && !nfloat && !nvoid) {
+                   && !t && !nint && !nchar && !nshort && !nlong && !uns && !sgn && !nfloat && !ndouble && !nvoid) {
             t = tok.id->sym->type;
         } else break;
         next();
     }
     if (t) return t;
     if (nvoid) return ty_void;
+    if (ndouble) return ty_double;          /* double, long double */
     if (nfloat) return ty_float;
     if (nchar) { if (uns) return ty_uchar; return ty_char; }
     if (nshort) { if (uns) return ty_ushort; return ty_short; }
+    if (nlong >= 2) { if (uns) return ty_ullong; return ty_llong; }
     if (uns) return ty_uint;
     return ty_int;
 }
@@ -2283,20 +2839,10 @@ Type *rv(Type *t)
 /* implicit conversion of the value on top of the stack */
 void convert(Type *from, Type *to)
 {
-    if (to->kind == T_VOID) return;
-    if (to->kind == T_FLOAT && is_int(from)) {
-        if (from->uns && from->kind == T_INT) emit_op(OP_UTOF);
-        else emit_op(OP_ITOF);
-    } else if (is_int(to) && from->kind == T_FLOAT) {
-        if (to->uns) emit_op(OP_FTOU);
-        else emit_op(OP_FTOI);
-    } else if (to->kind == T_STRUCT || from->kind == T_STRUCT) {
-        if (to != from) error("incompatible struct types");
-    } else if (to->kind == T_FLOAT && from->kind == T_PTR) {
-        error("cannot convert pointer to float");
-    } else if (to->kind == T_PTR && from->kind == T_FLOAT) {
-        error("cannot convert float to pointer");
-    }
+    int ops[2];
+    int n = conv_seq(from, to, ops);
+    int i;
+    for (i = 0; i < n; i++) emit_op(ops[i]);
 }
 
 /* explicit cast */
@@ -2315,26 +2861,24 @@ void cast_to(Type *from, Type *to)
     }
 }
 
+/* the usual arithmetic conversions */
 Type *usual(Type *l, Type *r)
 {
+    if (l->kind == T_DOUBLE || r->kind == T_DOUBLE) return ty_double;
     if (l->kind == T_FLOAT || r->kind == T_FLOAT) return ty_float;
+    if (l->kind == T_LLONG || r->kind == T_LLONG) {
+        if ((l->kind == T_LLONG && l->uns) || (r->kind == T_LLONG && r->uns)) return ty_ullong;
+        return ty_llong;
+    }
     if ((l->kind == T_INT && l->uns) || (r->kind == T_INT && r->uns)) return ty_uint;
     return ty_int;
 }
 
-/* make both operands (l below, r on top) arithmetic of type 'to' */
+/* make both operands (l below, r on top) of type 'to' */
 void promote2(Type *l, Type *r, Type *to)
 {
-    if (to->kind == T_FLOAT) {
-        if (l->kind != T_FLOAT) {
-            if (l->uns && l->kind == T_INT) op(OP_UTOF2);
-            else emit_op(OP_ITOF2);
-        }
-        if (r->kind != T_FLOAT) {
-            if (r->uns && r->kind == T_INT) emit_op(OP_UTOF);
-            else emit_op(OP_ITOF);
-        }
-    }
+    convert_under(l, to, tcells(r));
+    convert(r, to);
 }
 
 /* binary operator k with left type l (below) and right type r (on top) */
@@ -2342,9 +2886,11 @@ Type *binop_code(int k, Type *l, Type *r)
 {
     Type *t;
     int sz;
+    int fam;
     if (l->kind == T_STRUCT || r->kind == T_STRUCT) error("invalid operands (struct)");
     if (k == '+' || k == '-') {
         if (is_ptr(l) && is_int(r)) {
+            convert(r, ty_int);
             sz = elem_size(l);
             if (sz != 1) { emit_imm(sz); emit_op(OP_MUL); }
             if (k == '+') emit_op(OP_ADD);
@@ -2352,6 +2898,7 @@ Type *binop_code(int k, Type *l, Type *r)
             return l;
         }
         if (is_int(l) && is_ptr(r) && k == '+') {
+            convert_under(l, ty_int, 1);
             sz = elem_size(r);
             op(OP_SWAP);
             if (sz != 1) { emit_imm(sz); emit_op(OP_MUL); }
@@ -2367,6 +2914,8 @@ Type *binop_code(int k, Type *l, Type *r)
     }
     if (k == TK_EQ || k == TK_NE || k == '<' || k == '>' || k == TK_LE || k == TK_GE) {
         if (is_ptr(l) || is_ptr(r)) {
+            if (is_int(r) && !is_ptr(r)) convert(r, ty_int);
+            if (is_int(l) && !is_ptr(l)) convert_under(l, ty_int, 1);
             if (k == TK_EQ) emit_op(OP_EQ);
             else if (k == TK_NE) emit_op(OP_NE);
             else if (k == '<') emit_op(OP_LTU);
@@ -2375,50 +2924,60 @@ Type *binop_code(int k, Type *l, Type *r)
             else emit_op(OP_GEU);
             return ty_int;
         }
+        if (!is_arith(l) || !is_arith(r)) error("invalid operands to comparison");
         t = usual(l, r);
         promote2(l, r, t);
-        if (t->kind == T_FLOAT) {
-            if (k == TK_EQ) emit_op(OP_FEQ);
-            else if (k == TK_NE) emit_op(OP_FNE);
-            else if (k == '<') emit_op(OP_FLT);
-            else if (k == '>') emit_op(OP_FGT);
-            else if (k == TK_LE) emit_op(OP_FLE);
-            else emit_op(OP_FGE);
-        } else if (t->uns) {
-            if (k == TK_EQ) emit_op(OP_EQ);
-            else if (k == TK_NE) emit_op(OP_NE);
-            else if (k == '<') emit_op(OP_LTU);
-            else if (k == '>') emit_op(OP_GTU);
+        /* base opcode for == then != < <= > >= in each family */
+        if (t->kind == T_DOUBLE) fam = OP_DEQ;
+        else if (t->kind == T_FLOAT) fam = OP_FEQ;
+        else if (t->kind == T_LLONG) fam = OP_LEQ;
+        else fam = OP_EQ;
+        if (k == TK_EQ) emit_op(fam);
+        else if (k == TK_NE) emit_op(fam + 1);
+        else if (t->uns && t->kind == T_LLONG) {
+            if (k == '<') emit_op(OP_LLTU);
+            else if (k == TK_LE) emit_op(OP_LLEU);
+            else if (k == '>') emit_op(OP_LGTU);
+            else emit_op(OP_LGEU);
+        } else if (t->uns && t->kind == T_INT) {
+            if (k == '<') emit_op(OP_LTU);
             else if (k == TK_LE) emit_op(OP_LEU);
+            else if (k == '>') emit_op(OP_GTU);
             else emit_op(OP_GEU);
         } else {
-            if (k == TK_EQ) emit_op(OP_EQ);
-            else if (k == TK_NE) emit_op(OP_NE);
-            else if (k == '<') emit_op(OP_LT);
-            else if (k == '>') emit_op(OP_GT);
-            else if (k == TK_LE) emit_op(OP_LE);
-            else emit_op(OP_GE);
+            if (k == '<') emit_op(fam + 2);
+            else if (k == TK_LE) emit_op(fam + 3);
+            else if (k == '>') emit_op(fam + 4);
+            else emit_op(fam + 5);
         }
         return ty_int;
     }
     if (!is_arith(l) || !is_arith(r)) error("invalid operands to binary operator");
-    t = usual(l, r);
-    if (k == '%' || k == '&' || k == '|' || k == '^' || k == TK_SHL || k == TK_SHR) {
-        if (t->kind == T_FLOAT) error("integer operator on float");
-        if (k == '%') { if (t->uns) emit_op(OP_MODU); else emit_op(OP_MOD); }
-        else if (k == '&') emit_op(OP_AND);
-        else if (k == '|') emit_op(OP_OR);
-        else if (k == '^') emit_op(OP_XOR);
-        else if (k == TK_SHL) emit_op(OP_SHL);
-        else {
-            if (l->uns && l->kind == T_INT) emit_op(OP_SHR);
-            else emit_op(OP_SAR);
-            if (l->uns && l->kind == T_INT) return ty_uint;
-            return ty_int;
+    if (k == TK_SHL || k == TK_SHR) {
+        if (!is_int(l) || !is_int(r)) error("integer operator on floating point");
+        convert(r, ty_int);
+        if (l->kind == T_LLONG) {
+            if (k == TK_SHL) emit_op(OP_LSHL);
+            else if (l->uns) emit_op(OP_LSHR);
+            else emit_op(OP_LSAR);
+            return l;
         }
+        if (k == TK_SHL) emit_op(OP_SHL);
+        else if (l->uns && l->kind == T_INT) emit_op(OP_SHR);
+        else emit_op(OP_SAR);
+        if (l->uns && l->kind == T_INT) return ty_uint;
+        return ty_int;
+    }
+    t = usual(l, r);
+    if ((k == '%' || k == '&' || k == '|' || k == '^') && is_flt(t)) error("integer operator on floating point");
+    promote2(l, r, t);
+    if (t->kind == T_DOUBLE) {
+        if (k == '+') emit_op(OP_DADD);
+        else if (k == '-') emit_op(OP_DSUB);
+        else if (k == '*') emit_op(OP_DMUL);
+        else emit_op(OP_DDIV);
         return t;
     }
-    promote2(l, r, t);
     if (t->kind == T_FLOAT) {
         if (k == '+') emit_op(OP_FADD);
         else if (k == '-') emit_op(OP_FSUB);
@@ -2426,10 +2985,25 @@ Type *binop_code(int k, Type *l, Type *r)
         else emit_op(OP_FDIV);
         return t;
     }
+    if (t->kind == T_LLONG) {
+        if (k == '+') emit_op(OP_LADD);
+        else if (k == '-') emit_op(OP_LSUB);
+        else if (k == '*') emit_op(OP_LMUL);
+        else if (k == '/') { if (t->uns) emit_op(OP_LDIVU); else emit_op(OP_LDIV); }
+        else if (k == '%') { if (t->uns) emit_op(OP_LMODU); else emit_op(OP_LMOD); }
+        else if (k == '&') emit_op(OP_LAND);
+        else if (k == '|') emit_op(OP_LOR);
+        else emit_op(OP_LXOR);
+        return t;
+    }
     if (k == '+') emit_op(OP_ADD);
     else if (k == '-') emit_op(OP_SUB);
     else if (k == '*') emit_op(OP_MUL);
-    else { if (t->uns) emit_op(OP_DIVU); else emit_op(OP_DIV); }
+    else if (k == '/') { if (t->uns) emit_op(OP_DIVU); else emit_op(OP_DIV); }
+    else if (k == '%') { if (t->uns) emit_op(OP_MODU); else emit_op(OP_MOD); }
+    else if (k == '&') emit_op(OP_AND);
+    else if (k == '|') emit_op(OP_OR);
+    else emit_op(OP_XOR);
     return t;
 }
 
@@ -2477,11 +3051,14 @@ Type *call(Type *ft, Sym *direct)
     Param *p;
     Type *at;
     int n = 0;
+    int nv = 0;
     int tmp;
     Type *ret;
+    int user_va;
     if (ft->kind == T_PTR && ft->base->kind == T_FUNC) ft = ft->base;
     if (ft->kind != T_FUNC) error("called object is not a function");
     p = ft->params;
+    user_va = ft->variadic && !(direct && direct->sys);
     next();   /* past '(' */
     if (tok.kind != ')') {
         while (1) {
@@ -2489,29 +3066,41 @@ Type *call(Type *ft, Sym *direct)
             at = rv(at);
             if (p) {
                 convert(at, p->type);
+                n = n + tcells(p->type);
                 p = p->next;
-            } else if (ft->proto && !ft->variadic) {
-                error("too many arguments");
+            } else {
+                if (ft->proto && !ft->variadic) error("too many arguments");
+                /* default argument promotions: float becomes double */
+                if (at->kind == T_FLOAT) { convert(at, ty_double); at = ty_double; }
+                n = n + tcells(at);
+                nv = nv + tcells(at);
             }
-            n++;
             if (!accept(',')) break;
         }
     }
     expect(')', ")");
     if (p) error("too few arguments");
+    if (user_va) {
+        /* a variadic function of the program's own: pass the count */
+        emit_imm(nv);
+        n++;
+    }
     if (n > 255) error("too many arguments");
+    ret = ft->base;
     if (direct && direct->sys) {
         hist_clear();
+        last_op_pos = -1;
         out1(OP_SYS);
-        out2(direct->sys);
+        if (tcells(ret) == 2) out2(direct->sys | 0x8000);
+        else out2(direct->sys);
         out1(n);
     } else if (direct) {
         emit_fn_ref(OP_CALL, direct);
     } else {
         op(OP_CALLI);
         out1(n);
+        last_op_pos = -1;
     }
-    ret = ft->base;
     lv = 0;
     if (ret->kind == T_STRUCT) {
         /* copy out of the callee's dead frame straight away */
@@ -2533,16 +3122,28 @@ Type *primary(void)
     int off;
     lv = 0;
     if (tok.kind == TK_NUM) {
-        emit_imm(tok.val);
-        if (tok.uns) t = ty_uint;
-        else t = ty_int;
+        if (tok.lng) {
+            emit_imm64(tok.val, tok.hi);
+            if (tok.uns) t = ty_ullong;
+            else t = ty_llong;
+        } else {
+            emit_imm(tok.val);
+            if (tok.uns) t = ty_uint;
+            else t = ty_int;
+        }
         next();
         return t;
     }
     if (tok.kind == TK_FNUM) {
-        emit_imm(tok.val);
+        if (tok.lng) {
+            emit_imm64(tok.val, tok.hi);
+            t = ty_double;
+        } else {
+            emit_imm(tok.val);
+            t = ty_float;
+        }
         next();
-        return ty_float;
+        return t;
     }
     if (tok.kind == TK_STR) {
         string_lit(&str, &n);
@@ -2567,7 +3168,17 @@ Type *primary(void)
                 t = new_type(T_FUNC, 1, 1);
                 t->base = ty_int;
                 s = add_global_sym(id, S_FUNC, t);
-            } else error_s("undeclared identifier", id->name);
+            } else {
+                error_prev("undeclared identifier", id->name);
+            }
+        }
+        if (id == id_va_start && s->kind == S_FUNC && !s->defined) {
+            /* va_start: the address of this function's variadic arguments */
+            expect('(', "(");
+            expect(')', ")");
+            if (!cur_fn || !cur_fn->type->variadic) error("va_start outside a variadic function");
+            op(OP_VASTART);
+            return ty_charp;
         }
         if (s->kind == S_ENUM) {
             emit_imm(s->addr);
@@ -2589,9 +3200,9 @@ Type *primary(void)
         lv = 1;
         return s->type;
     }
-    if (tok.kind == TK_EOF) error("unexpected end of file");
+    if (tok.kind == TK_EOF) fatal("unexpected end of file");
     error("expected expression");
-    return 0;
+    return ty_int;
 }
 
 Member *find_member(Type *t, Ident *name)
@@ -2610,6 +3221,8 @@ int inc_mode(Type *t)
     if (t->kind == T_CHAR) { if (t->uns) return INC_BU; return INC_B; }
     if (t->kind == T_SHORT) { if (t->uns) return INC_HU; return INC_H; }
     if (t->kind == T_FLOAT) return INC_F;
+    if (t->kind == T_LLONG) return INC_L;
+    if (t->kind == T_DOUBLE) return INC_D;
     if (t->kind == T_INT || t->kind == T_PTR) return INC_W;
     error("invalid operand to ++/--");
     return 0;
@@ -2625,9 +3238,8 @@ void emit_inc(Type *t, int delta, int post)
     out4(delta);
 }
 
-Type *postfix(void)
+Type *postfix_tail(Type *t)
 {
-    Type *t = primary();
     Type *it;
     Member *m;
     int sz;
@@ -2639,6 +3251,7 @@ Type *postfix(void)
             it = expr();
             it = rv(it);
             if (!is_int(it)) error("array subscript is not an integer");
+            convert(it, ty_int);
             expect(']', "]");
             sz = elem_size(t);
             if (sz != 1) { emit_imm(sz); emit_op(OP_MUL); }
@@ -2683,7 +3296,39 @@ Type *postfix(void)
     return t;
 }
 
+Type *postfix(void)
+{
+    return postfix_tail(primary());
+}
+
 Type *unary(void);
+void local_init(Type *t, int off);
+void global_init(Type *t, int seg, int off);
+int unsized_len(Type *t);
+
+/* (type){ initializers }: an unnamed object, an lvalue */
+Type *compound_literal(Type *t)
+{
+    int off;
+    int seg;
+    int sv;
+    if (t->kind == T_ARRAY && t->len < 0) t = array_of(t->base, unsized_len(t));
+    if (t->kind == T_VOID || t->kind == T_FUNC) error("invalid compound literal type");
+    if (cur_fn) {
+        off = alloc_local(t);
+        local_init(t, off);
+        emit_lea(off);
+    } else {
+        off = alloc_global(t, 1, &seg);
+        sv = static_init;
+        static_init = 1;
+        global_init(t, seg, off);
+        static_init = sv;
+        emit_addr(seg, off);
+    }
+    lv = 1;
+    return t;
+}
 
 Type *sizeof_expr(void)
 {
@@ -2698,7 +3343,7 @@ Type *sizeof_expr(void)
     cpos = save_c;
     nrelocs = save_r;
     spos = save_s;
-    hist_clear();
+    here();
     lv = 0;
     return t;
 }
@@ -2713,19 +3358,23 @@ Type *unary(void)
         t = rv(t);
         if (k == '-') {
             if (t->kind == T_FLOAT) emit_op(OP_FNEG);
+            else if (t->kind == T_DOUBLE) emit_op(OP_DNEG);
+            else if (t->kind == T_LLONG) emit_op(OP_LNEG);
             else if (is_int(t)) { emit_op(OP_NEG); t = usual(t, ty_int); }
             else error("invalid operand to unary -");
         } else if (k == '+') {
             if (!is_arith(t)) error("invalid operand to unary +");
         } else if (k == '!') {
             if (t->kind == T_FLOAT) { emit_imm(0); emit_op(OP_FEQ); }
+            else if (t->kind == T_DOUBLE) { emit_op(OP_D2B); emit_op(OP_LNOT); }
+            else if (t->kind == T_LLONG) { emit_op(OP_L2B); emit_op(OP_LNOT); }
             else if (is_scalar(t)) emit_op(OP_LNOT);
             else error("invalid operand to !");
             t = ty_int;
         } else {
             if (!is_int(t)) error("invalid operand to ~");
-            emit_op(OP_NOT);
-            t = usual(t, ty_int);
+            if (t->kind == T_LLONG) emit_op(OP_LCOM);
+            else { emit_op(OP_NOT); t = usual(t, ty_int); }
         }
         return t;
     }
@@ -2790,6 +3439,7 @@ Type *unary(void)
             next();
             to = type_name();
             expect(')', ")");
+            if (tok.kind == '{') return postfix_tail(compound_literal(to));
             t = unary();
             t = rv(t);
             if (to->kind == T_STRUCT) error("cast to struct");
@@ -2820,6 +3470,8 @@ int prec(int k)
 void to_bool(Type *t)
 {
     if (t->kind == T_FLOAT) { emit_imm(0); emit_op(OP_FNE); }
+    else if (t->kind == T_DOUBLE) emit_op(OP_D2B);
+    else if (t->kind == T_LLONG) emit_op(OP_L2B);
     else if (!is_scalar(t)) error("scalar required");
 }
 
@@ -2881,10 +3533,25 @@ Type *cond_expr(void)
     patch_chain(jf, here());
     t2 = cond_expr();
     t2 = rv(t2);
-    if (t->kind == T_FLOAT && is_int(t2)) emit_op(OP_ITOF);
-    else if (is_int(t) && t2->kind == T_FLOAT) emit_op(OP_FTOI);
-    patch_chain(je, here());
-    if (is_ptr(t2) && !is_ptr(t)) t = t2;
+    /* the result type: both branches end up as 'ct' */
+    {
+        Type *ct = t;
+        int ops[2];
+        int je2;
+        if (is_arith(t) && is_arith(t2)) ct = usual(t, t2);
+        else if (is_ptr(t2) && !is_ptr(t)) ct = t2;
+        if (is_arith(t2) && is_arith(ct)) convert(t2, ct);
+        if (is_arith(t) && is_arith(ct) && conv_seq(t, ct, ops) > 0) {
+            /* the first branch needs converting too: do it after the second */
+            je2 = emit_jump(OP_JMP, 0);
+            patch_chain(je, here());
+            convert(t, ct);
+            patch_chain(je2, here());
+        } else {
+            patch_chain(je, here());
+        }
+        t = ct;
+    }
     lv = 0;
     return t;
 }
@@ -2950,8 +3617,8 @@ Type *expr(void)
     Type *t = assign_expr();
     while (tok.kind == ',') {
         next();
-        rv(t);
-        op(OP_POP);
+        t = rv(t);
+        emit_pop(t);
         t = assign_expr();
     }
     return t;
@@ -2967,6 +3634,7 @@ int const_expr(void)
     hist_clear();
     t = cond_expr();
     t = rv(t);
+    if (is_int(t)) convert(t, ty_int);
     nocode_depth--;
     if (!is_const_since(start) || !is_int(t)) error("constant expression required");
     v = imm_value(start);
@@ -2985,9 +3653,46 @@ void local_decl(void);
 void expr_stmt(void)
 {
     Type *t = expr();
-    rv(t);
-    op(OP_POP);
+    t = rv(t);
+    emit_pop(t);
     expect(';', ";");
+}
+
+/* after an error: forget half-finished state, skip to a statement end */
+void reset_after_error(void)
+{
+    while (src && src->kind == SRC_TOK && src->barrier) pop_src();
+    keep_spell = 0;
+    in_if = 0;
+    stop_nl = 0;
+    nocode_depth = 0;
+    pending_fn = 0;
+    lv = 0;
+    static_init = 0;
+    here();
+}
+
+void skip_statement(void)
+{
+    int lvl = 0;
+    while (tok.kind != TK_EOF) {
+        if (tok.kind == '{') lvl++;
+        else if (tok.kind == '}') {
+            if (lvl == 0) {
+                /* '};' or '},' closes an initializer we were inside, not the block */
+                peek();
+                if (peek_tok.kind != ';' && peek_tok.kind != ',') return;
+                next();
+                continue;
+            }
+            lvl--;
+            if (lvl == 0) { next(); return; }
+        } else if (tok.kind == ';' && lvl == 0) {
+            next();
+            return;
+        }
+        next();
+    }
 }
 
 void cond_jump(int *chain)
@@ -3013,13 +3718,33 @@ Label *find_label(Ident *name)
 
 void block(void)
 {
+    jmp_buf outer;
+    int d0;
+    int save;
+    int sv_brk;
+    int sv_cont;
+    int sv_ct;
+    int sv_loop;
+    int sv_sw;
+    int sv_def;
+    Case *sv_cases;
+    int st;
     enter_scope();
-    {
-        int save = frame_size;
-        while (tok.kind != '}') {
-            if (tok.kind == TK_EOF) error("unexpected end of file in block");
+    d0 = depth;
+    save = frame_size;
+    sv_brk = brk_chain;
+    sv_cont = cont_chain;
+    sv_ct = cont_target;
+    sv_loop = in_loop;
+    sv_sw = in_switch;
+    sv_def = default_pc;
+    sv_cases = cases;
+    memcpy(outer, err_jb, sizeof(jmp_buf));
+    while (tok.kind != '}') {
+        if (setjmp(err_jb) == 0) {
+            if (tok.kind == TK_EOF) fatal("unexpected end of file in block");
             if (is_typename()) {
-                int st = 0;
+                st = 0;
                 if (tok.kind == TK_ID) {
                     peek();
                     /* 'name:' is a label, 'type name' a declaration */
@@ -3028,9 +3753,22 @@ void block(void)
                 if (st) statement();
                 else local_decl();
             } else statement();
+        } else {
+            /* an error inside this statement: carry on with the next one */
+            reset_after_error();
+            while (depth > d0) leave_scope();
+            brk_chain = sv_brk;
+            cont_chain = sv_cont;
+            cont_target = sv_ct;
+            in_loop = sv_loop;
+            in_switch = sv_sw;
+            default_pc = sv_def;
+            cases = sv_cases;
+            skip_statement();
         }
-        frame_size = save;
     }
+    memcpy(err_jb, outer, sizeof(jmp_buf));
+    frame_size = save;
     leave_scope();
     next();
 }
@@ -3151,8 +3889,8 @@ void statement(void)
         linc = here();
         if (tok.kind != ')') {
             t = expr();
-            rv(t);
-            op(OP_POP);
+            t = rv(t);
+            emit_pop(t);
         }
         emit_jump(OP_JMP, lcond);
         expect(')', ")");
@@ -3177,12 +3915,12 @@ void statement(void)
         t = expr();
         t = rv(t);
         if (!is_int(t)) error("switch on a non-integer");
+        convert(t, ty_int);
         expect(')', ")");
         tmp = alloc_local(ty_int);
         emit_lea(tmp);
         op(OP_SWAP);
-        op(OP_STW);
-        op(OP_POP);
+        op(OP_STWP);
         je = emit_jump(OP_JMP, 0);
         sv_brk = brk_chain;
         sv_sw = in_switch;
@@ -3249,7 +3987,8 @@ void statement(void)
         next();
         if (tok.kind == ';') {
             next();
-            op(OP_RET);
+            if (tcells(cur_ret) == 2) { emit_imm64(0, 0); op(OP_RETV); }
+            else op(OP_RET);
             return;
         }
         t = expr();
@@ -3292,6 +4031,29 @@ void statement(void)
 /* initializers                                                        */
 /* ------------------------------------------------------------------ */
 
+/* designated initializers: [index] = ... and .member = ... */
+int designator_index(int i)
+{
+    if (tok.kind != '[') return i;
+    next();
+    i = const_expr();
+    if (i < 0) error("negative array index in initializer");
+    expect(']', "]");
+    expect('=', "=");
+    return i;
+}
+
+Member *designator_member(Type *t, Member *m)
+{
+    if (tok.kind != '.') return m;
+    next();
+    if (tok.kind != TK_ID) error("expected member name");
+    m = find_member(t, tok.id);
+    next();
+    expect('=', "=");
+    return m;
+}
+
 /* local initializer: store into the frame at 'off' */
 void local_init(Type *t, int off)
 {
@@ -3332,6 +4094,7 @@ void local_init(Type *t, int off)
         if (t->kind == T_ARRAY) {
             i = 0;
             while (tok.kind != '}') {
+                i = designator_index(i);
                 if (t->len >= 0 && i >= t->len) error("too many initializers");
                 local_init(t->base, off + i * t->base->size);
                 i++;
@@ -3340,6 +4103,7 @@ void local_init(Type *t, int off)
         } else {
             m = t->mem;
             while (tok.kind != '}') {
+                m = designator_member(t, m);
                 if (!m) error("too many initializers");
                 local_init(m->type, off + m->off);
                 m = m->next;
@@ -3362,7 +4126,7 @@ void local_init(Type *t, int off)
     r = rv(r);
     convert(r, t);
     emit_store(t);
-    op(OP_POP);
+    emit_pop(t);
 }
 
 void chunk_begin(int at)
@@ -3389,8 +4153,6 @@ void data_put(int off, int v, int size)
     }
 }
 
-int static_init;   /* 1: constants only (static locals) */
-
 /* one scalar global initializer at segment offset off */
 void global_scalar(Type *t, int seg, int off)
 {
@@ -3398,12 +4160,23 @@ void global_scalar(Type *t, int seg, int off)
     int vstart;
     Type *r;
     int v;
+    int hi;
     emit_addr(seg, off);
     vstart = cpos;
     r = assign_expr();
     r = rv(r);
     convert(r, t);
-    if (is_const_since(vstart) && seg == SEG_DATA) {
+    if (tcells(t) == 2 && is_const2_since(vstart) && seg == SEG_DATA) {
+        v = imm_value(vstart);
+        hi = imm_value(hist_pos[nhist - 1]);
+        cpos = start;
+        nrelocs--;
+        hist_clear();
+        data_put(off, v, 4);
+        data_put(off + 4, hi, 4);
+        return;
+    }
+    if (tcells(t) == 1 && is_const_since(vstart) && seg == SEG_DATA) {
         v = imm_value(vstart);
         cpos = start;
         nrelocs--;
@@ -3414,7 +4187,7 @@ void global_scalar(Type *t, int seg, int off)
     if (static_init) error("initializer is not a constant");
     chunk_begin(start);
     emit_store(t);
-    op(OP_POP);
+    emit_pop(t);
     chunk_end();
 }
 
@@ -3447,6 +4220,7 @@ void global_init(Type *t, int seg, int off)
         if (t->kind == T_ARRAY) {
             i = 0;
             while (tok.kind != '}') {
+                i = designator_index(i);
                 if (i >= t->len) error("too many initializers");
                 global_init(t->base, seg, off + i * t->base->size);
                 i++;
@@ -3455,6 +4229,7 @@ void global_init(Type *t, int seg, int off)
         } else {
             m = t->mem;
             while (tok.kind != '}') {
+                m = designator_member(t, m);
                 if (!m) error("too many initializers");
                 global_init(m->type, seg, off + m->off);
                 m = m->next;
@@ -3505,23 +4280,36 @@ int unsized_len(Type *t)
         return len + 1;
     }
     if (tok.kind != '{') error("array initializer must be a list");
-    while (1) {
-        buf = mbuf_grow(buf, &cap, n + 1);
-        buf[n] = tok;
-        n++;
-        if (tok.kind == '{' || tok.kind == '(' || tok.kind == '[') {
-            lvl++;
-            if (lvl == 1) count = 0;
-        } else if (tok.kind == '}' || tok.kind == ')' || tok.kind == ']') {
-            lvl--;
-            if (lvl == 0) {
-                if (n >= 2 && buf[n - 2].kind != ',' && buf[n - 2].kind != '{') count++;
-                break;
+    /* count elements; a designator [N] = moves the position */
+    {
+        int idx = 0;
+        int started = 0;
+        int want_idx = 0;
+        while (1) {
+            buf = mbuf_grow(buf, &cap, n + 1);
+            buf[n] = tok;
+            n++;
+            if (want_idx) {
+                if (tok.kind == TK_NUM) idx = tok.val;
+                want_idx = 0;
             }
-        } else if (tok.kind == ',' && lvl == 1) {
-            count++;
-        } else if (tok.kind == TK_EOF) error("unterminated initializer");
-        next();
+            if (tok.kind == '{' || tok.kind == '(' || tok.kind == '[') {
+                if (tok.kind == '[' && lvl == 1 && !started) want_idx = 1;
+                if (lvl >= 1) started = 1;
+                lvl++;
+            } else if (tok.kind == '}' || tok.kind == ')' || tok.kind == ']') {
+                lvl--;
+                if (lvl == 0) {
+                    if (started) { idx++; if (idx > count) count = idx; }
+                    break;
+                }
+            } else if (tok.kind == ',' && lvl == 1) {
+                if (started) { idx++; if (idx > count) count = idx; }
+                started = 0;
+            } else if (tok.kind == TK_EOF) fatal("unterminated initializer");
+            else if (lvl >= 1) started = 1;
+            next();
+        }
     }
     next();
     buf = mbuf_grow(buf, &cap, n + 1);
@@ -3632,19 +4420,21 @@ void func_body(Sym *fs, Type *ft)
     frame_size = 0;
     frame_max = 0;
     enter_scope();
-    /* parameters occupy the first cells of the frame */
+    /* parameters occupy the first cells of the frame (two for 64-bit) */
     for (p = ft->params; p; p = p->next) {
         off = frame_size;
-        frame_size = frame_size + 4;
+        frame_size = frame_size + 4 * tcells(p->type);
         if (p->name) {
             s = add_sym(p->name, S_LOCAL, p->type);
             s->addr = off;
         }
     }
     if (frame_size > frame_max) frame_max = frame_size;
-    hist_clear();
-    out1(OP_ENTER);
-    out1(ft->nparams);
+    if (frame_size > 255 * 4) error("too many parameters");
+    here();
+    if (ft->variadic) out1(OP_ENTERV);
+    else out1(OP_ENTER);
+    out1(frame_size / 4);
     enter_at = cpos;
     out4(0);
     /* struct parameters arrive as pointers: copy into the frame */
@@ -3662,8 +4452,9 @@ void func_body(Sym *fs, Type *ft)
     }
     expect('{', "{");
     block();
-    op(OP_RET);
-    put4(enter_at, frame_max);
+    if (tcells(cur_ret) == 2) { emit_imm64(0, 0); op(OP_RETV); }
+    else op(OP_RET);
+    put4(enter_at, (frame_max + 7) & ~7);
     for (l = labels; l; l = l->next)
         if (l->pc < 0) error_s("undefined label", l->name->name);
     leave_scope();
@@ -3762,6 +4553,10 @@ void init_types(void)
     ty_uint = new_type(T_INT, 4, 4);
     ty_uint->uns = 1;
     ty_float = new_type(T_FLOAT, 4, 4);
+    ty_double = new_type(T_DOUBLE, 8, 8);
+    ty_llong = new_type(T_LLONG, 8, 8);
+    ty_ullong = new_type(T_LLONG, 8, 8);
+    ty_ullong->uns = 1;
     ty_charp = ptr_to(ty_char);
 }
 
@@ -3805,6 +4600,7 @@ void init_keywords(void)
     id_main = intern("main", 4);
     id_defined = intern("defined", 7);
     id_line = intern("__LINE__", 8);
+    id_va_start = intern("__va_start", 10);
 }
 
 void w4(FILE *f, int v)
@@ -3888,6 +4684,8 @@ void reset_globals(void)
     brk_chain = 0; cont_chain = 0; cont_target = -1; in_loop = 0; in_switch = 0;
     cases = 0; default_pc = 0; ret_tmp = 0; init_tail = 0; in_chunk = 0;
     errors = 0; warnings = 0; verbose = 0;
+    tok_line = 0; tok_col = 0; prev_line = 0; prev_col = 0; have_jb = 0; keep_spell = 0;
+    last_op_pos = -1; addr_at = -1;
     sbuf = 0; scap2 = 0; catbuf = 0; catcap = 0; ifl = 0; nifl = 0; ifp = 0;
     st_typedef = 0; st_static = 0; st_extern = 0; static_init = 0;
     outname[0] = 0;
@@ -3895,8 +4693,8 @@ void reset_globals(void)
 
 int main(int argc, char **argv)
 {
-    char *in = 0;
-    char *out = 0;
+    char *volatile in = 0;
+    char *volatile out = 0;
     int i;
     int n;
     int entry;
@@ -3938,7 +4736,7 @@ int main(int argc, char **argv)
     ftab = malloc(fcap);
     scap2 = 256;
     sbuf = malloc(scap2);
-    if (!code || !strseg || !dataseg || !relocs || !lines || !ftab || !sbuf) error("out of memory");
+    if (!code || !strseg || !dataseg || !relocs || !lines || !ftab || !sbuf) fatal("out of memory");
     last_line = -1;
     cont_target = -1;
 
@@ -3956,8 +4754,26 @@ int main(int argc, char **argv)
         exit(1);
     }
     open_mem(cc_prelude, "<builtin>");
-    next();
-    while (tok.kind != TK_EOF) top_decl();
+    have_jb = 1;
+    if (setjmp(err_jb) == 0) next();
+    while (tok.kind != TK_EOF) {
+        if (setjmp(err_jb) == 0) {
+            top_decl();
+        } else {
+            /* an error in a declaration: skip to its end and go on */
+            reset_after_error();
+            while (depth > 0) leave_scope();
+            cur_fn = 0;
+            skip_statement();
+            if (tok.kind == '}') next();
+        }
+    }
+    have_jb = 0;
+    if (errors) {
+        if (errors == 1) printf("1 error\n");
+        else printf("%d errors\n", errors);
+        exit(1);
+    }
 
     ms = id_main->sym;
     if (!ms || ms->kind != S_FUNC || !ms->defined) error("no main function");
