@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/.."
 : "${PICO_SDK_PATH:?set PICO_SDK_PATH to your pico-sdk}"
-V=0.3
+V=0.33
 mkdir -p dist
 build() {   # dir board sdboot
     cmake -S . -B "$1" -DPICO_BOARD="$2" -DCALCIDE_SDBOOT="$3" -DCMAKE_BUILD_TYPE=Release >/dev/null

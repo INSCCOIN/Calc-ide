@@ -2,7 +2,7 @@
 #ifndef SHELL_H
 #define SHELL_H
 
-#define CALCIDE_VERSION "0.3"
+#define CALCIDE_VERSION "0.33"
 
 void shell_init(void);
 void shell_main(void);                       /* never returns */

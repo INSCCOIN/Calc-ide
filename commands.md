@@ -195,7 +195,8 @@ page file: 768 KB (192 pages of 4 KB)
 
 | Command | What it does |
 |---|---|
-| `play NOTES...` | Play a tune. Notes are `C D E F G A B` with `#` or `b` and an octave (`C#4`, `Eb5`; the default octave is 4). `/N` sets the length (`/1 /2 /4 /8 /16 /32`, default `/4`), `.` makes a note dotted, `R` is a rest, `T140` sets the tempo, `L8` the default length and `O5` the default octave. Ctrl+C (the break key) stops it. |
+| `play NOTES...` | Play a tune. Notes are `C D E F G A B` with `#` or `b` and an octave (`C#4`, `Eb5`; the default octave is 4). `/N` sets the length (`/1 /2 /4 /8 /16 /32`, default `/4`), `.` makes a note dotted, `R` is a rest, `T140` sets the tempo, `L8` the default length and `O5` the default octave. The break key stops it. See the synthesizer reference below for channels, instruments and drums. |
+| `play FILE.song` | Play a song file (e.g. `play /calcide/songs/chiptune.song`). |
 | `wav FILE.wav` | Play an 8- or 16-bit PCM WAV file, mono or stereo, up to 48 kHz. |
 | `gpio` | List the GPIO pins programs may use: 0–5, 8, 9, 20–22 and 28. |
 | `gpio PIN` | Read a pin. |
@@ -203,8 +204,37 @@ page file: 768 KB (192 pages of 4 KB)
 | `gpio PIN 0\|1` | Make a pin an output and set it. |
 | `selftest [quick] [flash]` | Check RAM, the SD card (write, read back, speed), the page file, the compiler and VM (compiles and runs a test program), battery, temperature and clock. Then it shows colour bars and box lines, waits for a key, and plays three notes, asking y/n after each. `quick` skips the interactive part; `flash` also writes and erases a page-file object. |
 
+### The synthesizer
+
+Up to four channels play at once, separated by `|`, and they are mixed at 16 kHz.
+
+| Token | Meaning |
+|---|---|
+| `C4` `D#5` `Eb3` | a note (A4 = 440 Hz) |
+| `/1 /2 /4 /8 /16 /32`, `.` | length, dotted |
+| `R` | rest |
+| `K` `SN` `HH` `OH` `CP` `TH` `TL` `CY` | kick, snare, closed hi-hat, open hi-hat, clap, high tom, low tom, crash; they take lengths too: `HH/8` |
+| `ISQ` `IPLS` `ITRI` `ISAW` `ISIN` | instrument: square, 25% pulse, triangle, saw, sine (default square) |
+| `V0`..`V9` | channel volume (default 7) |
+| `T120` | tempo in quarter notes per minute; the first `T` in the string sets the start for every channel |
+| `L8`, `O5` | default length, default octave |
+| `[ ... ]x3` | repeat (nests; `[ ]` alone repeats twice) |
+| `@/path.song` | (from C) play a song file |
+
+A `.song` file is plain text. `#` starts a comment, but only at the start of a line or after a space, since `C#` is a note. A line `1: ...` to `4: ...` adds to that channel, and a line without a number goes to channel 1. Lines for the same channel run on, one after another:
+
+```
+# my song
+T120
+1: ISQ O5 [E E F G G F E D]x2
+2: ITRI V9 [C3/2 G2/2]x4
+3: [K/4 HH/8 HH/8 SN/4 HH/8 HH/8]x4
+```
+
 ```
 /> play T160 E5/8 D#5/8 E5/8 D#5/8 E5/8 B4/8 D5/8 C5/8 A4/4.
+/> play T120 C4 E4 G4 C5 | K/4 SN/4 K/4 SN/4
+/> play /calcide/songs/ode.song
 /> wav /music/intro.wav
 /> gpio 2 1
 GP2 = 1

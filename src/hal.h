@@ -60,6 +60,7 @@ void hal_tone_off(void);
 void hal_pcm_start(int rate);           /* 8-bit samples to the speakers */
 void hal_pcm_write(uint8_t sample);     /* 128 = silence; caller paces */
 void hal_pcm_stop(void);
+int  hal_pcm_realtime(void);            /* 0: no need to pace (host tests) */
 
 /* GPIO for programs; pins the board uses are refused */
 enum { HAL_GPIO_IN = 0, HAL_GPIO_OUT = 1, HAL_GPIO_PULLUP = 2, HAL_GPIO_PULLDOWN = 3 };

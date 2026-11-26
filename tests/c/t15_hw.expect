@@ -7,6 +7,9 @@ uart avail: 1
 uart loopback: 6 'hello!' -1
 play: 0
 bad note: -1
+channels and drums: 0
+repeats: 0 -1
+bad instrument: -1
 wav 16-bit stereo: 0
 wav 8-bit mono: 0
 wav missing: -1

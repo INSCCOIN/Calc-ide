@@ -1,0 +1,15 @@
+# Drum Machine - a tour of the drum kit (original)
+# rock beat, funk groove, claps, tom fill, crash
+T110
+1: V9
+1: [K/4 SN/4 K/8 K/8 SN/4]x4
+1: [K/16 R/16 R/16 K/16 SN/8 R/16 K/16 R/16 K/16 R/8 SN/8 R/8]x4
+1: [K/4 CP/4 K/4 CP/4]x2
+1: TH/16 TH/16 TH/16 TH/16 TL/16 TL/16 TL/16 TL/16 SN/16 SN/16 SN/16 SN/16 K/16 SN/16 K/16 SN/16
+1: K/2 R/2
+2: V8
+2: CY/8 [HH/8]x7 [HH/8]x24
+2: [HH/16 HH/16 OH/8 HH/16 HH/16 HH/16 HH/16]x8
+2: [HH/8]x16
+2: R/1
+2: CY/1

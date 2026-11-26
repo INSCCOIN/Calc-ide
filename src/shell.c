@@ -515,12 +515,24 @@ static int c_play(int argc, char **argv)
 {
     char notes[256] = "";
     int i, r;
-    if (argc < 2) { con_puts("usage: play NOTES   e.g. play T140 C4 E4 G4/2 R C5/2\n"); return 1; }
+    if (argc < 2) { con_puts("usage: play NOTES | play FILE.song\n  e.g. play T140 C4 E4 G4/2 R C5/2 | K/4 SN/4 K/4 SN/4\n"); return 1; }
     for (i = 1; i < argc; i++) {
         if (i > 1) strncat(notes, " ", sizeof notes - strlen(notes) - 1);
         strncat(notes, argv[i], sizeof notes - strlen(notes) - 1);
     }
     if (g_conf.mute) con_puts("(muted - 'mute off' to hear it)\n");
+    /* one argument that names a file: a .song */
+    if (argc == 2 && (strchr(argv[1], '.') || strchr(argv[1], '/')) && vfs_mounted()) {
+        char full[VFS_PATH];
+        int isdir = 0;
+        if (vfs_resolve(argv[1], full) && vfs_stat(full, &isdir, 0) && !isdir) {
+            con_printf("playing %s (break key stops)\n", vfs_basename(full));
+            con_flush();
+            r = play_file(full);
+            if (r < 0) { err("play", play_error(), 0); return 1; }
+            return 0;
+        }
+    }
     r = play_notes(notes);
     if (r < 0) { err("play", play_error(), 0); return 1; }
     return 0;
@@ -1437,7 +1449,7 @@ static const Cmd cmds[] = {
     {"bye", c_bye, "bye", "say goodbye and power off"},
     {"bootsel", c_bootsel, "bootsel", "reboot into the USB bootloader to flash new firmware"},
     {"history", c_history, "history [-c]", "command history (!N or !! repeats)"},
-    {"play", c_play, "play NOTES", "play a tune: T120 L4 C4 E4 G4/8 R C#5/2."},
+    {"play", c_play, "play NOTES | play FILE.song", "play a tune: up to 4 channels split by |, drums K SN HH OH CP TH TL CY"},
     {"wav", c_wav, "wav FILE", "play a PCM .wav file"},
     {"gpio", c_gpio, "gpio PIN [in|out|up|down|0|1]", "read or set a free GPIO pin"},
     {"selftest", c_selftest, "selftest [quick] [flash]", "check memory, SD, flash, compiler, sensors, screen, keys, sound"},

@@ -546,6 +546,7 @@ void hal_pcm_write(uint8_t v)
 }
 
 void hal_pcm_stop(void) { hal_tone_off(); }
+int hal_pcm_realtime(void) { return 1; }
 
 /* ------------------------------------------------------------------ */
 /* GPIO and UART for programs                                          */

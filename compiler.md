@@ -175,7 +175,7 @@ Everything below is always declared, so `#include` lines are optional. The full 
 | `float temperature(void)`, `int cpu_temp(void)` | chip temperature in °C |
 | `void pixel(x, y, color)`, `fillrect(x, y, w, h, color)`, `line(x0, y0, x1, y1, color)` | direct drawing on the 320×320 panel (RGB565) |
 | `int rgb(int r, int g, int b)` | make an RGB565 colour |
-| `int play(char *notes)` | play a tune: `play("T140 L8 C4 E4 G4 C5/2")` (see `play` in commands.md); 0, or -1 for a bad note |
+| `int play(char *notes)` | play a tune on the 4-channel synthesizer: `play("T140 ISQ L8 C4 E4 G4 C5/2 \| K SN K SN")`, or a song file with `play("@/calcide/songs/ode.song")` (see the synthesizer section in commands.md); 0, or -1 for a bad song |
 | `int play_wav(char *path)` | play a PCM `.wav` (8/16-bit, mono/stereo, up to 48 kHz); 0 or -1 |
 | `int gpio_mode(int pin, int mode)` | `GPIO_IN`, `GPIO_OUT`, `GPIO_PULLUP`, `GPIO_PULLDOWN`; -1 for a pin the PicoCalc uses |
 | `int gpio_write(int pin, int value)`, `int gpio_read(int pin)` | free pins: 0–5, 8, 9, 20–22, 28 |

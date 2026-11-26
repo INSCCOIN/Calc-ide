@@ -1,0 +1,10 @@
+# Sound Check - every instrument and drum, one after another
+T150
+1: V7 L8
+1: ISQ  C4 E4 G4 C5 G4 E4 C4/4
+1: IPLS C4 E4 G4 C5 G4 E4 C4/4
+1: ITRI C4 E4 G4 C5 G4 E4 C4/4
+1: ISAW C4 E4 G4 C5 G4 E4 C4/4
+1: ISIN C4 E4 G4 C5 G4 E4 C4/4
+1: V8 K/4 SN/4 HH/4 OH/4 CP/4 TH/4 TL/4 CY/2
+1: R/4 [K/16 HH/16 SN/16 HH/16]x4 K/4 CY/2

@@ -1,4 +1,4 @@
-# CalcIDE 0.3
+# CalcIDE 0.33
 
 **A self-hosting C IDE for the ClockworkPi PicoCalc.** It boots into a DOS-style command line. From there you write, edit, compile and run C entirely on the PicoCalc, with no PC involved. Source, compiler and programs all live on the SD card.
 
@@ -22,6 +22,33 @@ Everything else is new: the Tiny-C compiler, the bytecode VM, the shell, the edi
 ![The shell](docs/shell.png) ![The editor](docs/editor.png)
 
 ![64 columns](docs/editor64.png) ![A program](docs/mandel.png)
+
+## New in 0.33: a little synthesizer
+
+`play` is now a 4-channel synthesizer mixed in software at 16 kHz.
+
+- **Several channels at once:** separate them with `|`.
+- **Instruments:** five waveforms: `ISQ` square, `IPLS` pulse, `ITRI` triangle, `ISAW` saw, `ISIN` sine. Each channel has its own volume (`V0`–`V9`).
+- **Drums:** a synthesized kit (no samples needed): `K` kick, `SN` snare, `HH` closed and `OH` open hi-hat, `CP` clap, `TH`/`TL` high and low tom, `CY` crash.
+- **Repeats:** `[ ... ]x4`, and they nest.
+- **Song files:** `.song` files hold one line per channel (`1:` to `4:`). Play one with `play FILE.song` or `play("@/path.song")` from C.
+
+```
+play T128 IPLS L8 [E5 G5 A5 G5]x2 | ITRI V9 A2/2 F2/2 | [K HH SN HH]x2
+```
+
+`install` puts six songs in `/calcide/songs/`:
+
+| Song | What it tests |
+|---|---|
+| `demo.song` | every instrument, then every drum (start here) |
+| `beat.song` | drums only: rock, funk, claps, a tom fill |
+| `ode.song` | Ode to Joy: melody, bass and drums |
+| `furelise.song` | Für Elise: two triangle-wave "hands" |
+| `canon.song` | Pachelbel's Canon: three voices entering one by one |
+| `chiptune.song` | an original 4-channel chiptune with arpeggios |
+
+`tools/songcheck.py` checks that a song's channels are all the same length. `examples/drums.c` plays melody, bass and drums from C.
 
 ## New in 0.3
 
@@ -77,11 +104,11 @@ Everything is in `dist/`:
 
 | File | For |
 |---|---|
-| `calcide-0.3-rp2350.uf2` | PicoCalc with a **Raspberry Pi Pico 2 / Pico 2 W** (RP2350), stand-alone |
-| `calcide-0.3-rp2040.uf2` | PicoCalc with a **Raspberry Pi Pico / Pico W** (RP2040), stand-alone |
-| `calcide-0.3-rp2350-sdboot.bin` | RP2350 app for the PicoCalc **SD boot launcher** (`pico_multi_booter`) |
-| `calcide-0.3-rp2040-sdboot.bin` | RP2040 app for the SD boot launcher |
-| `calcide-0.3.zip` | Everything above plus the full source and documentation |
+| `calcide-0.33-rp2350.uf2` | PicoCalc with a **Raspberry Pi Pico 2 / Pico 2 W** (RP2350), stand-alone |
+| `calcide-0.33-rp2040.uf2` | PicoCalc with a **Raspberry Pi Pico / Pico W** (RP2040), stand-alone |
+| `calcide-0.33-rp2350-sdboot.bin` | RP2350 app for the PicoCalc **SD boot launcher** (`pico_multi_booter`) |
+| `calcide-0.33-rp2040-sdboot.bin` | RP2040 app for the SD boot launcher |
+| `calcide-0.33.zip` | Everything above plus the full source and documentation |
 
 **Stand-alone:** hold BOOTSEL on the Pico, plug in USB, and copy the `.uf2` onto the drive that appears. From a running CalcIDE, the `bootsel` command does the same without opening the case.
 
@@ -246,7 +273,7 @@ Replacing an object writes the new copy first and switches the directory last, s
 | firmware static RAM (incl. 24/12 KB stack) | 64 KB | 53 KB |
 | free heap at the prompt | ~450 KB | ~200 KB |
 | memory a program gets (auto) | ~400 KB | ~150 KB |
-| flash used by the firmware | 424 KB | 432 KB |
+| flash used by the firmware | 432 KB | 440 KB |
 
 The compiler, the editor buffer and the VM each allocate memory only while they run and free it on return, so each tool gets nearly all of RAM. `mem` shows the free heap and the largest free block. Compiling a small program takes about 70 KB, mostly the built-in library's declarations. Compiling the compiler itself takes about 300 KB natively, or about 330 KB of VM memory for the self-hosted version.
 
@@ -284,7 +311,7 @@ make && CALCIDE_ROOT=sdroot ./build-host/calcide
 make test
 ```
 
-This runs 41 checks:
+This runs 42 checks:
 
 - 15 C programs, each compiled by CalcIDE and run on the VM, with output compared against the same program built by the host gcc. They cover 64-bit arithmetic, `double` maths, variadic functions, `setjmp`, designated initializers, compound literals and stringizing.
 - 11 deliberate errors: runtime errors, and compile errors including the multi-error report.
@@ -292,6 +319,7 @@ This runs 41 checks:
 - The self-hosted compiler builds a working program.
 - The firmware's FatFs layer against FAT32 and FAT16 disk images, checked afterwards with `fsck.vfat`.
 - The boot-screen BMP decoder on 1, 4, 8, 24 and 32-bit images, checked pixel by pixel against PIL.
+- Every bundled song has channels of equal length.
 - Scripted shell and editor sessions, including tabs, auto-close, `show_stats`, `selftest`, `play` and `gpio`, and history surviving a restart.
 - The host build simulates the GPIO pins and loops each UART back to itself, so programs can be tested off the device.
 

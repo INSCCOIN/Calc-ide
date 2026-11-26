@@ -37,6 +37,9 @@ int main(void)
     uart_close(0);
     printf("play: %d\n", play("T600 L16 C4 D#4 Eb4 R G4/32 C5. O5 A B"));
     printf("bad note: %d\n", play("C4 H4"));
+    printf("channels and drums: %d\n", play("T600 ISAW C4 E4 | ITRI V9 C2/2 | K SN HH OH CP TH TL CY/16"));
+    printf("repeats: %d %d\n", play("T600 [[C5/32 E5/32]x2 G5/32]x3"), play("T600 [C4 D4"));
+    printf("bad instrument: %d\n", play("IXYZ C4"));
     write_wav("t.wav", 8000, 16, 2, 400);
     printf("wav 16-bit stereo: %d\n", play_wav("t.wav"));
     write_wav("t8.wav", 4000, 8, 1, 200);

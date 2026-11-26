@@ -97,6 +97,11 @@ def main():
             report(r.returncode == 0 and "fatfs ok" in out and fsck.returncode == 0,
                    "fatfs FAT%s (and fsck clean)" % bits, out + fsck.stdout.decode())
 
+    # every song's channels are the same length
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "songcheck.py")] +
+                       sorted(glob.glob(os.path.join(ROOT, "songs", "*.song"))), capture_output=True)
+    report(r.returncode == 0, "songs: channels line up", r.stdout.decode())
+
     # the boot-screen BMP decoder against PIL
     if os.path.exists(IDE):
         r = subprocess.run([sys.executable, os.path.join(ROOT, "tests", "bmp_test.py")], capture_output=True)

@@ -1,0 +1,12 @@
+# Ode to Joy - Beethoven, 9th symphony (public domain)
+# 1: melody   2: bass   3: drums
+T120
+1: ISQ V6 O5
+1: [E E F G  G F E D  C C D E  E. D/8 D/2
+1:  E E F G  G F E D  C C D E  D. C/8 C/2]x2
+2: ITRI V9
+2: [C3/2 C3/2 G2/2 G2/2 C3/2 C3/2 G2/2 G2/2
+2:  C3/2 C3/2 G2/2 G2/2 C3/2 C3/2 G2/2 C3/2]x2
+3: V6 CY/4 HH/8 HH/8 SN/4 HH/8 HH/8
+3: [K/4 HH/8 HH/8 SN/4 HH/8 HH/8]x13
+3: K/8 K/8 SN/16 SN/16 SN/16 SN/16 TH/8 TL/8 K/4 CY/1

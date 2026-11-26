@@ -5,6 +5,8 @@
  * (play_error() says which), or 1 if stopped by the break key. */
 int play_notes(const char *s);
 const char *play_error(void);
+/* a .song file: lines "N: notes" for channels 1-4, '#' comments */
+int play_file(const char *path);
 /* Play a PCM .wav (8/16-bit, mono/stereo, any rate up to 48 kHz):
  * 0 ok, 1 stopped, -1 error (play_error()). */
 int play_wav(const char *path);

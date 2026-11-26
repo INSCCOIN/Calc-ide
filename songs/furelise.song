@@ -1,0 +1,11 @@
+# Fur Elise - Beethoven (public domain), opening theme played twice
+# 1: right hand   2: left hand
+T110
+1: ITRI V8 L16
+1: [E5 D#5
+1:  E5 D#5 E5 B4 D5 C5   A4/8 R C4 E4 A4   B4/8 R E4 G#4 B4   C5/8 R E4 E5 D#5
+1:  E5 D#5 E5 B4 D5 C5   A4/8 R C4 E4 A4   B4/8 R E4 C5 B4    A4/4 R/8]x2
+2: ITRI V6 L16
+2: [R/8
+2:  R/4.   A2 E3 A3 R/8.   E2 E3 G#3 R/8.   A2 E3 A3 R/8.
+2:  R/4.   A2 E3 A3 R/8.   E2 E3 G#3 R/8.   A2/4 R/8]x2

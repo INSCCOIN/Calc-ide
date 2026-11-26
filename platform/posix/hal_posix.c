@@ -355,10 +355,19 @@ int hal_sd_hc(void) { return 1; }
 /* UART loops its output back to its input (for tests)                 */
 /* ------------------------------------------------------------------ */
 
+/* CALCIDE_PCM=FILE appends every sample (8-bit unsigned) for tests */
 static unsigned long pcm_samples;
-void hal_pcm_start(int rate) { (void)rate; pcm_samples = 0; }
-void hal_pcm_write(uint8_t v) { (void)v; pcm_samples++; }
-void hal_pcm_stop(void) { }
+static FILE *pcm_out;
+void hal_pcm_start(int rate)
+{
+    const char *p = getenv("CALCIDE_PCM");
+    (void)rate;
+    pcm_samples = 0;
+    if (p && !pcm_out) pcm_out = fopen(p, "ab");
+}
+void hal_pcm_write(uint8_t v) { pcm_samples++; if (pcm_out) fputc(v, pcm_out); }
+void hal_pcm_stop(void) { if (pcm_out) { fclose(pcm_out); pcm_out = 0; } }
+int hal_pcm_realtime(void) { return !batch; }
 
 static int gpio_val[30], gpio_dir[30];
 

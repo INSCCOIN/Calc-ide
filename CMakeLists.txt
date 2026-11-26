@@ -24,6 +24,11 @@ foreach(f ${EXAMPLES})
     get_filename_component(n ${f} NAME)
     list(APPEND EMBED_ARGS /calcide/examples/${n}=${f})
 endforeach()
+file(GLOB SONGS ${CMAKE_CURRENT_SOURCE_DIR}/songs/*.song)
+foreach(f ${SONGS})
+    get_filename_component(n ${f} NAME)
+    list(APPEND EMBED_ARGS /calcide/songs/${n}=${f})
+endforeach()
 foreach(n cc.c ops.h prelude.h)
     list(APPEND EMBED_ARGS /calcide/cc/${n}=${CMAKE_CURRENT_SOURCE_DIR}/cc/${n})
 endforeach()
@@ -31,7 +36,7 @@ add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/embedded.c
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed.py
             ${CMAKE_CURRENT_BINARY_DIR}/embedded.c ${EMBED_ARGS}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed.py ${EXAMPLES}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tools/embed.py ${EXAMPLES} ${SONGS}
             ${CMAKE_CURRENT_SOURCE_DIR}/cc/cc.c ${CMAKE_CURRENT_SOURCE_DIR}/cc/ops.h
             ${CMAKE_CURRENT_SOURCE_DIR}/cc/prelude.h
     COMMENT "Embedding examples and compiler source")
@@ -114,6 +119,6 @@ endif()
 pico_enable_stdio_usb(calcide 1)
 pico_enable_stdio_uart(calcide 0)
 pico_set_program_name(calcide "CalcIDE")
-pico_set_program_version(calcide "0.3")
+pico_set_program_version(calcide "0.33")
 pico_set_program_description(calcide "On-device C IDE for the ClockworkPi PicoCalc")
 pico_add_extra_outputs(calcide)
