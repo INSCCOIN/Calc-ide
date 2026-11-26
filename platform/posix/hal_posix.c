@@ -45,6 +45,8 @@ static void restore(void)
 }
 
 int hal_is_batch(void) { return batch; }
+void hal_reconfigure(void) { }
+int hal_safe_mode(void) { return 0; }
 
 void hal_init(void)
 {

@@ -29,6 +29,10 @@ typedef struct {
     int vm_stack_kb;
     int history;        /* lines of shell history */
     int click;          /* key click */
+    int lcd_bits;       /* 16 or 18 bits per pixel */
+    int lcd_madctl;     /* panel orientation register */
+    int lcd_invert;     /* colour inversion */
+    int bl_swap;        /* swap the screen/keyboard backlight registers */
     char prompt[32];    /* prompt format, $p = path */
     char autoexec[96];  /* command run at boot */
     char home[64];      /* start directory */

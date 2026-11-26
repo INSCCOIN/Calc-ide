@@ -34,6 +34,8 @@ enum {
 typedef uint16_t cell_t;
 
 void     hal_init(void);
+void     hal_reconfigure(void);         /* after /CalcIDE.conf is read */
+int      hal_safe_mode(void);           /* Esc held at power-on */
 uint32_t hal_millis(void);
 uint64_t hal_micros(void);
 void     hal_sleep_ms(int ms);

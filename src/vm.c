@@ -1397,10 +1397,12 @@ int vm_run_image(const uint8_t *img, int len, const char *name, int argc, char *
     /* memory: data + heap + stack, as much as is configured and available */
     stack = (uint32_t)g_conf.vm_stack_kb * 1024u;
     if (stack < 4096) stack = 4096;
-    want = (uint32_t)g_conf.vm_mem_kb * 1024u;
-    if (want < CBC_DATA_BASE + data_total + stack + 4096) want = CBC_DATA_BASE + data_total + stack + 4096;
     {
+        /* vm_mem_kb = 0: everything free, less a reserve for the file system */
         size_t largest = hal_ram_largest();
+        want = g_conf.vm_mem_kb ? (uint32_t)g_conf.vm_mem_kb * 1024u
+                                : (largest > 24 * 1024 ? (uint32_t)(largest - 16 * 1024) : 0);
+        if (want < CBC_DATA_BASE + data_total + stack + 4096) want = CBC_DATA_BASE + data_total + stack + 4096;
         if (largest > 24 * 1024 && want > largest - 16 * 1024) want = (uint32_t)(largest - 16 * 1024);
     }
     want &= ~7u;

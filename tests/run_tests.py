@@ -84,6 +84,19 @@ def main():
         rc, out3, _ = run([TOOL, "run", "t01_basics.cbc"], work)
         report(out2 == out3 and out2 != "", "self-hosted compiler output runs", out + out2)
 
+    # the firmware's FatFs layer against FAT32 and FAT16 disk images
+    fh = os.path.join(ROOT, "build-host", "fatfs_host")
+    if os.path.exists(fh) and shutil.which("mkfs.vfat"):
+        for bits, mb in (("32", "64"), ("16", "32")):
+            img = os.path.join(work, "sd%s.img" % bits)
+            subprocess.run(["dd", "if=/dev/zero", "of=" + img, "bs=1M", "count=" + mb], capture_output=True)
+            subprocess.run(["mkfs.vfat", "-F", bits, img], capture_output=True)
+            r = subprocess.run([fh, img], capture_output=True)
+            out = r.stdout.decode()
+            fsck = subprocess.run(["fsck.vfat", "-n", img], capture_output=True)
+            report(r.returncode == 0 and "fatfs ok" in out and fsck.returncode == 0,
+                   "fatfs FAT%s (and fsck clean)" % bits, out + fsck.stdout.decode())
+
     # shell scripts
     if os.path.exists(IDE):
         for f in sorted(glob.glob(os.path.join(ROOT, "tests", "shell", "*.txt"))):

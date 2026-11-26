@@ -47,7 +47,7 @@
 /  (0:Disable or 1:Enable) Also FF_FS_READONLY needs to be 0 to enable this option. */
 
 
-#define FF_USE_LABEL	0
+#define FF_USE_LABEL	1
 /* This option switches volume label API functions, f_getlabel() and f_setlabel().
 /  (0:Disable or 1:Enable) */
 
@@ -84,7 +84,7 @@
 / Locale and Namespace Configurations
 /---------------------------------------------------------------------------*/
 
-#define FF_CODE_PAGE	932
+#define FF_CODE_PAGE	437
 /* This option specifies the OEM code page to be used on the target system.
 /  Incorrect code page setting can cause a file open failure.
 /
@@ -113,7 +113,7 @@
 */
 
 
-#define FF_USE_LFN		0
+#define FF_USE_LFN		1
 #define FF_MAX_LFN		255
 /* The FF_USE_LFN switches the support for LFN (long file name).
 /
@@ -243,16 +243,16 @@
 /  buffer in the filesystem object (FATFS) is used for the file data transfer. */
 
 
-#define FF_FS_EXFAT		0
+#define FF_FS_EXFAT		1
 /* This option switches support for exFAT filesystem. (0:Disable or 1:Enable)
 /  To enable exFAT, also LFN needs to be enabled. (FF_USE_LFN >= 1)
 /  Note that enabling exFAT discards ANSI C (C89) compatibility. */
 
 
-#define FF_FS_NORTC		0
+#define FF_FS_NORTC		1
 #define FF_NORTC_MON	1
 #define FF_NORTC_MDAY	1
-#define FF_NORTC_YEAR	2025
+#define FF_NORTC_YEAR	2026
 /* The option FF_FS_NORTC switches timestamp feature. If the system does not have
 /  an RTC or valid timestamp is not needed, set FF_FS_NORTC = 1 to disable the
 /  timestamp feature. Every object modified by FatFs will have a fixed timestamp
@@ -308,18 +308,8 @@
 /  The FF_FS_TIMEOUT defines timeout period in unit of O/S time tick.
 */
 
-/* Zephyr specific configuration override */
-/* The ZEPHYR_CONFIG_OVERRIDE should be given header file name that will contain
-/  series of undefs and redefinitions of the FF_ identifiers from the ffconf.h
-/  it needs to override
-*/
-#ifdef ZEPHYR_CONFIG_OVERRIDE
-#define FFCONF_STRINGIZE_AGAIN(x) #x
-#define FFCONF_STRINGIZE(x) FFCONF_STRINGIZE_AGAIN(x)
-#include FFCONF_STRINGIZE(ZEPHYR_CONFIG_OVERRIDE)
-#undef FFCONF_STRINGIZE
-#undef FFCONF_STRINGIZE_AGAIN
-#endif
-/* End of Zephyr specific configuration override */
+/* CalcIDE: alignment of the sector window (an addition of the Zephyr copy of FatFs) */
+#define FS_FATFS_WINDOW_ALIGNMENT 4
+
 
 /*--- End of configuration options ---*/

@@ -35,7 +35,7 @@ static void banner(void)
     con_default_color();
 }
 
-int main(void)
+int calcide_main(void)
 {
     int fresh = 0;
     conf_defaults();
@@ -43,9 +43,10 @@ int main(void)
     if (vfs_mount()) {
         if (!conf_load()) fresh = 1;
     }
+    hal_reconfigure();
     hal_backlight(g_conf.backlight);
     hal_kbdlight(g_conf.kbd_light);
-    if (g_conf.cpu_mhz) hal_set_cpu_mhz(g_conf.cpu_mhz);
+    if (g_conf.cpu_mhz && !hal_safe_mode()) hal_set_cpu_mhz(g_conf.cpu_mhz);
     con_init();
     shell_init();
     if (fresh && vfs_mounted()) conf_save();   /* first boot: write the defaults */
@@ -59,7 +60,8 @@ int main(void)
         con_puts("First boot: created " CONF_PATH "\nRun 'install' to copy the examples.\n\n");
         con_default_color();
     }
-    if (g_conf.autoexec[0]) shell_exec(g_conf.autoexec);
+    if (hal_safe_mode()) con_puts("Safe mode (Esc at boot): clock and autoexec skipped\n");
+    else if (g_conf.autoexec[0]) shell_exec(g_conf.autoexec);
     con_flush();
     shell_main();
     con_flush();

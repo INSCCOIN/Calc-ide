@@ -66,10 +66,14 @@ void conf_defaults(void)
     g_conf.backlight = 200;
     g_conf.kbd_light = 64;
     g_conf.cpu_mhz = 0;
-    g_conf.vm_mem_kb = 192;
+    g_conf.vm_mem_kb = 0;                    /* 0 = auto: all free memory */
     g_conf.vm_stack_kb = 32;
     g_conf.history = 32;
     g_conf.click = 0;
+    g_conf.lcd_bits = 16;
+    g_conf.lcd_madctl = 0x48;
+    g_conf.lcd_invert = 1;
+    g_conf.bl_swap = 0;
     strcpy(g_conf.prompt, "$p> ");
     strcpy(g_conf.home, "/");
 }
@@ -106,10 +110,14 @@ static IntKey ikeys[] = {
     {"backlight", &g_conf.backlight, 0, 255, 0},
     {"kbd_backlight", &g_conf.kbd_light, 0, 255, 0},
     {"cpu_mhz", &g_conf.cpu_mhz, 0, 300, 0},
-    {"vm_mem_kb", &g_conf.vm_mem_kb, 32, 400, 0},
+    {"vm_mem_kb", &g_conf.vm_mem_kb, 0, 480, 0},
     {"vm_stack_kb", &g_conf.vm_stack_kb, 4, 128, 0},
     {"history", &g_conf.history, 4, 64, 0},
     {"key_click", &g_conf.click, 0, 1, 0},
+    {"lcd_bits", &g_conf.lcd_bits, 16, 18, 0},
+    {"lcd_madctl", &g_conf.lcd_madctl, 0, 255, 0},
+    {"lcd_invert", &g_conf.lcd_invert, 0, 1, 0},
+    {"bl_swap", &g_conf.bl_swap, 0, 1, 0},
     {0, 0, 0, 0, 0}
 };
 
