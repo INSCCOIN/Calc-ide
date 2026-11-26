@@ -24,6 +24,7 @@
 #include "config.h"
 #include "pf.h"
 #include "lineedit.h"
+#include "sound.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -79,6 +80,7 @@ typedef struct VM {
     int       inpos, inlen;
     uint32_t  t0, last_poll;
     int       native_depth;
+    int       uarts_open;       /* bit per port, closed when the program ends */
 } VM;
 
 static VM *g_vm;
@@ -746,6 +748,8 @@ enum {
     SYS_POWF, SYS_EXPF, SYS_LOGF, SYS_LOG10F, SYS_FLOORF, SYS_CEILF, SYS_FABSF, SYS_FMODF,
     SYS_ROUNDF, SYS_FMINF, SYS_FMAXF,
     SYS_SETJMP = 180, SYS_LONGJMP, SYS_VPRINTF, SYS_VSPRINTF, SYS_VSNPRINTF, SYS_VFPRINTF,
+    SYS_PLAY = 190, SYS_PLAYWAV, SYS_GPIOMODE, SYS_GPIOWRITE, SYS_GPIOREAD, SYS_UARTOPEN,
+    SYS_UARTCLOSE, SYS_UARTPUTC, SYS_UARTGETC, SYS_UARTWRITE, SYS_UARTREAD, SYS_UARTAVAIL, SYS_UARTPUTS,
     SYS_COUNT
 };
 
@@ -1192,6 +1196,36 @@ static int64_t vm_sys(VM *vm, int id, int32_t *a, int n)
     case SYS_CHARGING: { int ch = 0; hal_battery(&ch); return ch; }
     case SYS_CPUMHZ: return hal_cpu_khz() / 1000;
     case SYS_TEMPERATURE: return (uint32_t)f2i(hal_temp_c());
+    case SYS_PLAY: case SYS_PLAYWAV: {
+        int r = id == SYS_PLAY ? play_notes(vstr(vm, a[0])) : play_wav(vstr(vm, a[0]));
+        if (r == 1) vm_fail(vm, "break");
+        return r;
+    }
+    case SYS_GPIOMODE: return hal_gpio_mode(a[0], a[1]) ? 0 : -1;
+    case SYS_GPIOWRITE: return hal_gpio_write(a[0], a[1]) ? 0 : -1;
+    case SYS_GPIOREAD: return hal_gpio_read(a[0]);
+    case SYS_UARTOPEN:
+        if (!hal_uart_open(a[0], a[1])) return -1;
+        vm->uarts_open |= 1 << (a[0] & 1);
+        return 0;
+    case SYS_UARTCLOSE: hal_uart_close(a[0]); vm->uarts_open &= ~(1 << (a[0] & 1)); return 0;
+    case SYS_UARTPUTC: return hal_uart_putc(a[0], a[1]);
+    case SYS_UARTGETC: return hal_uart_getc(a[0]);
+    case SYS_UARTAVAIL: return hal_uart_available(a[0]);
+    case SYS_UARTWRITE: case SYS_UARTPUTS: {
+        const char *p = id == SYS_UARTPUTS ? vstr(vm, a[1]) : (const char *)vptr(vm, a[1], a[2] > 0 ? a[2] : 0);
+        int k, len = id == SYS_UARTPUTS ? (int)strlen(p) : a[2];
+        for (k = 0; k < len; k++) if (hal_uart_putc(a[0], (unsigned char)p[k]) < 0) return -1;
+        return len;
+    }
+    case SYS_UARTREAD: {
+        char *d;
+        int k = 0, c;
+        if (a[2] <= 0) return 0;
+        d = (char *)vptr(vm, a[1], a[2]);
+        while (k < a[2] && (c = hal_uart_getc(a[0])) >= 0) d[k++] = (char)c;
+        return k;
+    }
     case SYS_CPUTEMP: return (int32_t)(hal_temp_c() + 0.5f);
     case SYS_SCOLS: return con_cols();
     case SYS_SROWS: return con_rows();
@@ -1762,6 +1796,8 @@ int vm_run_image(const uint8_t *img, int len, const char *name, int argc, char *
     vm_last.ms = hal_millis() - vm->t0;
     hal_tone_off();
     close_all(vm);
+    if (vm->uarts_open & 1) hal_uart_close(0);
+    if (vm->uarts_open & 2) hal_uart_close(1);
     con_flush();
     rc = vm->exit_code;
     g_vm = 0;

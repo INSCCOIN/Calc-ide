@@ -515,3 +515,115 @@ void hal_reconfigure(void)
     }
     lcd_fill(0, 0, LCD_W, LCD_H, con_palette[g_conf.bg]);
 }
+
+/* ------------------------------------------------------------------ */
+/* PCM audio: the speaker PWM at a 256-step, ~586 kHz carrier          */
+/* ------------------------------------------------------------------ */
+
+void hal_pcm_start(int rate)
+{
+    uint slice_l = pwm_gpio_to_slice_num(SND_L), slice_r = pwm_gpio_to_slice_num(SND_R);
+    (void)rate;
+    gpio_set_function(SND_L, GPIO_FUNC_PWM);
+    gpio_set_function(SND_R, GPIO_FUNC_PWM);
+    snd_ready = 1;
+    pwm_set_clkdiv_int_frac(slice_l, 1, 0);
+    pwm_set_clkdiv_int_frac(slice_r, 1, 0);
+    pwm_set_wrap(slice_l, 255);
+    pwm_set_wrap(slice_r, 255);
+    pwm_set_output_polarity(slice_l, false, false);
+    if (slice_r != slice_l) pwm_set_output_polarity(slice_r, false, false);
+    pwm_set_gpio_level(SND_L, 128);
+    pwm_set_gpio_level(SND_R, 128);
+    pwm_set_enabled(slice_l, true);
+    pwm_set_enabled(slice_r, true);
+}
+
+void hal_pcm_write(uint8_t v)
+{
+    pwm_set_gpio_level(SND_L, v);
+    pwm_set_gpio_level(SND_R, v);
+}
+
+void hal_pcm_stop(void) { hal_tone_off(); }
+
+/* ------------------------------------------------------------------ */
+/* GPIO and UART for programs                                          */
+/* ------------------------------------------------------------------ */
+
+/* GP6/7 keyboard, GP10-15 LCD, GP16-19 SD card, GP26/27 sound, and
+ * GP23-25/29 belong to the Pico module itself (power, LED, Wi-Fi). */
+int hal_gpio_free(int pin)
+{
+    if (pin < 0 || pin > 29) return 0;
+    if (pin == 6 || pin == 7 || (pin >= 10 && pin <= 19) || pin == 26 || pin == 27) return 0;
+    if (pin >= 23 && pin <= 25) return 0;
+    if (pin == 29) return 0;
+    return 1;
+}
+
+int hal_gpio_mode(int pin, int mode)
+{
+    if (!hal_gpio_free(pin)) return 0;
+    gpio_init((uint)pin);
+    gpio_set_dir((uint)pin, mode == HAL_GPIO_OUT);
+    gpio_disable_pulls((uint)pin);
+    if (mode == HAL_GPIO_PULLUP) gpio_pull_up((uint)pin);
+    if (mode == HAL_GPIO_PULLDOWN) gpio_pull_down((uint)pin);
+    return 1;
+}
+
+int hal_gpio_write(int pin, int v)
+{
+    if (!hal_gpio_free(pin)) return 0;
+    gpio_put((uint)pin, v != 0);
+    return 1;
+}
+
+int hal_gpio_read(int pin)
+{
+    if (!hal_gpio_free(pin)) return -1;
+    return gpio_get((uint)pin) ? 1 : 0;
+}
+
+#include "hardware/uart.h"
+
+static uart_inst_t *uart_of(int port) { return port == 0 ? uart0 : port == 1 ? uart1 : 0; }
+
+int hal_uart_open(int port, int baud)
+{
+    uart_inst_t *u = uart_of(port);
+    int tx = port == 0 ? 0 : 4, rx = port == 0 ? 1 : 5;
+    if (!u || baud < 300 || baud > 3000000) return 0;
+    uart_init(u, (uint)baud);
+    gpio_set_function((uint)tx, GPIO_FUNC_UART);
+    gpio_set_function((uint)rx, GPIO_FUNC_UART);
+    return 1;
+}
+
+void hal_uart_close(int port)
+{
+    uart_inst_t *u = uart_of(port);
+    if (u) uart_deinit(u);
+}
+
+int hal_uart_putc(int port, int c)
+{
+    uart_inst_t *u = uart_of(port);
+    if (!u) return -1;
+    uart_putc_raw(u, (char)c);
+    return c & 255;
+}
+
+int hal_uart_getc(int port)
+{
+    uart_inst_t *u = uart_of(port);
+    if (!u || !uart_is_readable(u)) return -1;
+    return (uint8_t)uart_getc(u);
+}
+
+int hal_uart_available(int port)
+{
+    uart_inst_t *u = uart_of(port);
+    return u && uart_is_readable(u) ? 1 : 0;
+}

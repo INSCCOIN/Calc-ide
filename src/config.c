@@ -98,6 +98,7 @@ void conf_defaults(void)
     g_conf.show_stats = 0;
     g_conf.auto_close = 1;
     g_conf.max_files = 4;
+    g_conf.history_save = 1;
     g_conf.splash_image[0] = 0;
     strcpy(g_conf.prompt, "$p> ");
     strcpy(g_conf.home, "/");
@@ -137,7 +138,7 @@ static IntKey ikeys[] = {
     {"cpu_mhz", &g_conf.cpu_mhz, 0, 300, 0},
     {"vm_mem_kb", &g_conf.vm_mem_kb, 0, 480, 0},
     {"vm_stack_kb", &g_conf.vm_stack_kb, 4, 128, 0},
-    {"history", &g_conf.history, 4, 64, 0},
+    {"history", &g_conf.history, 4, 200, 0},
     {"key_click", &g_conf.click, 0, 1, 0},
     {"lcd_bits", &g_conf.lcd_bits, 16, 18, 0},
     {"lcd_madctl", &g_conf.lcd_madctl, 0, 255, 0},
@@ -150,6 +151,7 @@ static IntKey ikeys[] = {
     {"show_stats", &g_conf.show_stats, 0, 1, 0},
     {"auto_close", &g_conf.auto_close, 0, 1, 0},
     {"max_files", &g_conf.max_files, 1, 8, 0},
+    {"history_save", &g_conf.history_save, 0, 1, 0},
     {0, 0, 0, 0, 0}
 };
 

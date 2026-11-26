@@ -191,12 +191,36 @@ page file: 768 KB (192 pages of 4 KB)
  free  756 KB
 ```
 
+## Sound and hardware
+
+| Command | What it does |
+|---|---|
+| `play NOTES...` | Play a tune. Notes are `C D E F G A B` with `#` or `b` and an octave (`C#4`, `Eb5`; the default octave is 4). `/N` sets the length (`/1 /2 /4 /8 /16 /32`, default `/4`), `.` makes a note dotted, `R` is a rest, `T140` sets the tempo, `L8` the default length and `O5` the default octave. Ctrl+C (the break key) stops it. |
+| `wav FILE.wav` | Play an 8- or 16-bit PCM WAV file, mono or stereo, up to 48 kHz. |
+| `gpio` | List the GPIO pins programs may use: 0–5, 8, 9, 20–22 and 28. |
+| `gpio PIN` | Read a pin. |
+| `gpio PIN in\|out\|up\|down` | Set a pin's mode (`up`/`down` are inputs with a pull resistor). |
+| `gpio PIN 0\|1` | Make a pin an output and set it. |
+| `selftest [quick] [flash]` | Check RAM, the SD card (write, read back, speed), the page file, the compiler and VM (compiles and runs a test program), battery, temperature and clock. Then it shows colour bars and box lines, waits for a key, and plays three notes, asking y/n after each. `quick` skips the interactive part; `flash` also writes and erases a page-file object. |
+
+```
+/> play T160 E5/8 D#5/8 E5/8 D#5/8 E5/8 B4/8 D5/8 C5/8 A4/4.
+/> wav /music/intro.wav
+/> gpio 2 1
+GP2 = 1
+/> selftest quick
+CalcIDE 0.3 self test
+memory     PASS  64 KB tested, 412 KB free, largest 398 KB
+sd card    PASS  FAT32 32 KB verified, write 480 KB/s, read 1100 KB/s
+...
+```
+
 ## Shell conveniences
 
 | Command | What it does |
 |---|---|
 | `help [CMD]` | List commands, or show one command's usage. |
-| `history [-c]` | Numbered command history; `-c` clears it. |
+| `history [-c]` | Numbered command history; `-c` clears it, including the saved copy. History is saved to `/calcide/history.txt` (at most 16 KB, oldest first to go) and reloaded at boot; `set history_save 0` turns that off. |
 | `!!`, `!N` | Repeat the last command, or command number N. |
 | `alias` | List aliases. |
 | `alias NAME=COMMAND` | Define an alias (saved in `/CalcIDE.conf`). Words typed after the alias are appended. |

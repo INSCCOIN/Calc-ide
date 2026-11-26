@@ -232,6 +232,20 @@ char cc_prelude[] =
 "int battery_charging(void) __sys(150);\n"
 "void sleep(int seconds) __sys(151);\n"
 "int cpu_temp(void) __sys(152);\n"
+/* sound, GPIO and UART */
+"int play(char *notes) __sys(190);\n"
+"int play_wav(char *path) __sys(191);\n"
+"int gpio_mode(int pin, int mode) __sys(192);\n"
+"int gpio_write(int pin, int value) __sys(193);\n"
+"int gpio_read(int pin) __sys(194);\n"
+"int uart_open(int port, int baud) __sys(195);\n"
+"void uart_close(int port) __sys(196);\n"
+"int uart_putc(int port, int c) __sys(197);\n"
+"int uart_getc(int port) __sys(198);\n"
+"int uart_write(int port, void *buf, int n) __sys(199);\n"
+"int uart_read(int port, void *buf, int max) __sys(200);\n"
+"int uart_available(int port) __sys(201);\n"
+"int uart_puts(int port, char *s) __sys(202);\n"
 ;
 
 /* The names a PicoCalc program may want: #include <picocalc.h> (or <conio.h>). */
@@ -279,5 +293,9 @@ char cc_picocalc_h[] =
 "#define BRIGHT_MAGENTA 13\n"
 "#define BRIGHT_CYAN 14\n"
 "#define BRIGHT_WHITE 15\n"
+"#define GPIO_IN 0\n"
+"#define GPIO_OUT 1\n"
+"#define GPIO_PULLUP 2\n"
+"#define GPIO_PULLDOWN 3\n"
 "#endif\n"
 ;

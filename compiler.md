@@ -175,10 +175,17 @@ Everything below is always declared, so `#include` lines are optional. The full 
 | `float temperature(void)`, `int cpu_temp(void)` | chip temperature in °C |
 | `void pixel(x, y, color)`, `fillrect(x, y, w, h, color)`, `line(x0, y0, x1, y1, color)` | direct drawing on the 320×320 panel (RGB565) |
 | `int rgb(int r, int g, int b)` | make an RGB565 colour |
+| `int play(char *notes)` | play a tune: `play("T140 L8 C4 E4 G4 C5/2")` (see `play` in commands.md); 0, or -1 for a bad note |
+| `int play_wav(char *path)` | play a PCM `.wav` (8/16-bit, mono/stereo, up to 48 kHz); 0 or -1 |
+| `int gpio_mode(int pin, int mode)` | `GPIO_IN`, `GPIO_OUT`, `GPIO_PULLUP`, `GPIO_PULLDOWN`; -1 for a pin the PicoCalc uses |
+| `int gpio_write(int pin, int value)`, `int gpio_read(int pin)` | free pins: 0–5, 8, 9, 20–22, 28 |
+| `int uart_open(int port, int baud)`, `void uart_close(int port)` | port 0: GP0 TX, GP1 RX; port 1: GP4 TX, GP5 RX; closed automatically when the program ends |
+| `int uart_putc(int port, int c)`, `int uart_puts(int port, char *s)`, `int uart_write(int port, void *buf, int n)` | send |
+| `int uart_getc(int port)`, `int uart_read(int port, void *buf, int max)`, `int uart_available(int port)` | receive without waiting: `uart_getc` gives -1 when nothing has arrived |
 | `int pf_read(char *name, void *buf, int max)` | read a page-file object; returns its length, or -1 |
 | `int pf_write(char *name, void *buf, int len)` | write one (keep it rare: flash wears) |
 
-`<picocalc.h>` defines `KEY_UP`, `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`, `KEY_ENTER`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_ESC`, `KEY_DEL`, `KEY_INSERT`, `KEY_HOME`, `KEY_END`, `KEY_PGUP`, `KEY_PGDN`, `KEY_BREAK`, `KEY_F1`…`KEY_F10`, and the 16 colour names.
+`<picocalc.h>` defines `GPIO_IN`, `GPIO_OUT`, `GPIO_PULLUP`, `GPIO_PULLDOWN`, `KEY_UP`, `KEY_DOWN`, `KEY_LEFT`, `KEY_RIGHT`, `KEY_ENTER`, `KEY_BACKSPACE`, `KEY_TAB`, `KEY_ESC`, `KEY_DEL`, `KEY_INSERT`, `KEY_HOME`, `KEY_END`, `KEY_PGUP`, `KEY_PGDN`, `KEY_BREAK`, `KEY_F1`…`KEY_F10`, and the 16 colour names.
 
 Text output also understands ANSI escapes: `printf("\033[1;33mwarning\033[0m\n")`.
 
@@ -230,7 +237,7 @@ run /bin/cc.cbc /calcide/cc/cc.c -o /bin/cc2.cbc
 - **Single pass, no syntax tree.** Expressions emit stack-machine code as they are parsed. An lvalue leaves its address on the stack, and the load is emitted only when the value is needed, so `a = b`, `a += b`, `&a` and `a.b.c` all fall out of the same code.
 - **Constant folding** happens as code is emitted, by watching for runs of immediate values. The same mechanism evaluates array sizes, `case` labels, `enum` values and global initializers.
 - **Global initializers** that aren't constants become small code fragments, chained to run before `main`.
-- **The preprocessor** is part of the lexer, with token-level macro expansion and recycled buffers. Compiling the compiler (4,800 lines plus 154 built-in declarations) takes about 160 KB of compiler memory.
+- **The preprocessor** is part of the lexer, with token-level macro expansion and recycled buffers. Compiling the compiler (4,800 lines plus 167 built-in declarations) takes about 160 KB of compiler memory.
 - **The bytecode** has 145 opcodes: 32-bit and 64-bit integer, float and double arithmetic, plus fused forms for local and global loads, store-and-discard, add-immediate and compare-and-branch. A 64-bit value occupies two operand cells. A `.cbc` file holds a 48-byte header, the code, the initialised data, a line table, a function table and the source file names. The last three exist so runtime errors can name a line. `tools/cbcdis.py` disassembles a `.cbc`.
 - **The VM** is a switch interpreter over a 32-bit operand stack. Floats are carried as their IEEE bit patterns. Every load and store is bounds checked.
 

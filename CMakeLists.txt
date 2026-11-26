@@ -47,6 +47,8 @@ add_executable(calcide
     src/pf.c
     src/vm.c
     src/splash.c
+    src/sound.c
+    src/selftest.c
     src/ccport.c
     cc/cc.c
     platform/picocalc/hal_picocalc.c
@@ -80,6 +82,7 @@ target_link_libraries(calcide
     hardware_spi
     hardware_i2c
     hardware_pwm
+    hardware_uart
     hardware_adc
     hardware_flash
     hardware_sync
@@ -111,6 +114,6 @@ endif()
 pico_enable_stdio_usb(calcide 1)
 pico_enable_stdio_uart(calcide 0)
 pico_set_program_name(calcide "CalcIDE")
-pico_set_program_version(calcide "0.2")
+pico_set_program_version(calcide "0.3")
 pico_set_program_description(calcide "On-device C IDE for the ClockworkPi PicoCalc")
 pico_add_extra_outputs(calcide)

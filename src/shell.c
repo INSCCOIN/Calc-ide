@@ -15,6 +15,8 @@
 #include "cc.h"
 #include "editor.h"
 #include "lineedit.h"
+#include "sound.h"
+#include "selftest.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -509,10 +511,72 @@ static int c_bootsel(int argc, char **argv)
     return 0;
 }
 
+static int c_play(int argc, char **argv)
+{
+    char notes[256] = "";
+    int i, r;
+    if (argc < 2) { con_puts("usage: play NOTES   e.g. play T140 C4 E4 G4/2 R C5/2\n"); return 1; }
+    for (i = 1; i < argc; i++) {
+        if (i > 1) strncat(notes, " ", sizeof notes - strlen(notes) - 1);
+        strncat(notes, argv[i], sizeof notes - strlen(notes) - 1);
+    }
+    if (g_conf.mute) con_puts("(muted - 'mute off' to hear it)\n");
+    r = play_notes(notes);
+    if (r < 0) { err("play", play_error(), 0); return 1; }
+    return 0;
+}
+
+static int c_wav(int argc, char **argv)
+{
+    int r;
+    if (argc < 2) { con_puts("usage: wav FILE.wav\n"); return 1; }
+    if (!need_sd("wav")) return 1;
+    if (g_conf.mute) con_puts("(muted - 'mute off' to hear it)\n");
+    r = play_wav(argv[1]);
+    if (r < 0) { err("wav", play_error(), 0); return 1; }
+    if (r == 1) con_puts("stopped\n");
+    return 0;
+}
+
+static int c_gpio(int argc, char **argv)
+{
+    int pin, v;
+    if (argc < 2) {
+        con_puts("usage: gpio PIN [in|out|up|down|0|1]\nfree pins:");
+        for (pin = 0; pin < 30; pin++) if (hal_gpio_free(pin)) con_printf(" %d", pin);
+        con_puts("\n");
+        return 0;
+    }
+    pin = atoi(argv[1]);
+    if (!hal_gpio_free(pin)) { err("gpio", "pin is used by the PicoCalc or does not exist", argv[1]); return 1; }
+    if (argc > 2) {
+        const char *m = argv[2];
+        if (!strcasecmp(m, "in")) hal_gpio_mode(pin, HAL_GPIO_IN);
+        else if (!strcasecmp(m, "out")) hal_gpio_mode(pin, HAL_GPIO_OUT);
+        else if (!strcasecmp(m, "up")) hal_gpio_mode(pin, HAL_GPIO_PULLUP);
+        else if (!strcasecmp(m, "down")) hal_gpio_mode(pin, HAL_GPIO_PULLDOWN);
+        else if (!strcmp(m, "0") || !strcmp(m, "1")) { hal_gpio_mode(pin, HAL_GPIO_OUT); hal_gpio_write(pin, m[0] == '1'); }
+        else { err("gpio", "use in, out, up, down, 0 or 1", 0); return 1; }
+    }
+    v = hal_gpio_read(pin);
+    con_printf("GP%d = %d\n", pin, v);
+    return 0;
+}
+
+static int c_selftest(int argc, char **argv)
+{
+    return selftest_run(argc, argv);
+}
+
+#define HIST_FILE "/calcide/history.txt"
 static int c_history(int argc, char **argv)
 {
     int i;
-    if (argc > 1 && (!strcmp(argv[1], "-c") || !strcmp(argv[1], "clear"))) { le_history_clear(&hist); return 0; }
+    if (argc > 1 && (!strcmp(argv[1], "-c") || !strcmp(argv[1], "clear"))) {
+        le_history_clear(&hist);
+        if (vfs_mounted()) vfs_remove(HIST_FILE);
+        return 0;
+    }
     page_rows = 0;
     for (i = 0; i < hist.count; i++) {
         if (!more_check()) break;
@@ -602,6 +666,7 @@ static int c_set(int argc, char **argv)
     hal_backlight(g_conf.backlight);
     hal_kbdlight(g_conf.kbd_light);
     con_cursor(g_conf.cursor);
+    hist.max = g_conf.history;
     if (!strcasecmp(argv[1], "fg") || !strcasecmp(argv[1], "bg")) con_default_color();
     conf_save();
     return 0;
@@ -1372,6 +1437,10 @@ static const Cmd cmds[] = {
     {"bye", c_bye, "bye", "say goodbye and power off"},
     {"bootsel", c_bootsel, "bootsel", "reboot into the USB bootloader to flash new firmware"},
     {"history", c_history, "history [-c]", "command history (!N or !! repeats)"},
+    {"play", c_play, "play NOTES", "play a tune: T120 L4 C4 E4 G4/8 R C#5/2."},
+    {"wav", c_wav, "wav FILE", "play a PCM .wav file"},
+    {"gpio", c_gpio, "gpio PIN [in|out|up|down|0|1]", "read or set a free GPIO pin"},
+    {"selftest", c_selftest, "selftest [quick] [flash]", "check memory, SD, flash, compiler, sensors, screen, keys, sound"},
     {"alias", c_alias, "alias [NAME=CMD]", "list or define aliases (saved)"},
     {"unalias", c_unalias, "unalias NAME", "remove an alias"},
     {"set", c_set, "set [KEY VALUE] | set save|reload|defaults", "CalcIDE.conf settings"},
@@ -1601,10 +1670,56 @@ static void make_prompt(char *out, int cap)
     out[n] = 0;
 }
 
+/* history survives a restart: /calcide/history.txt, at most 16 KB */
+#define HIST_FILE "/calcide/history.txt"
+#define HIST_MAX_BYTES (16 * 1024)
+
+static void history_save(void)
+{
+    char *buf;
+    int i, first = 0, total = 0;
+    if (!g_conf.history_save || !vfs_mounted()) return;
+    for (i = 0; i < hist.count; i++) total += (int)strlen(hist.lines[i]) + 1;
+    while (total > HIST_MAX_BYTES && first < hist.count) total -= (int)strlen(hist.lines[first++]) + 1;
+    buf = (char *)malloc((size_t)total + 1);
+    if (!buf) return;
+    total = 0;
+    for (i = first; i < hist.count; i++) {
+        size_t l = strlen(hist.lines[i]);
+        memcpy(buf + total, hist.lines[i], l);
+        total += (int)l;
+        buf[total++] = '\n';
+    }
+    if (!vfs_stat("/calcide", 0, 0)) vfs_mkdir("/calcide");
+    vfs_save(HIST_FILE, buf, total);
+    free(buf);
+}
+
+static void history_load(void)
+{
+    int len;
+    char *txt, *line, *nl;
+    if (!g_conf.history_save || !vfs_mounted()) return;
+    txt = vfs_load(HIST_FILE, &len, 0);
+    if (!txt) return;
+    if (len > HIST_MAX_BYTES) {
+        /* keep the newest 16 KB, starting at a line boundary */
+        line = txt + len - HIST_MAX_BYTES;
+        while (*line && *line != '\n') line++;
+    } else line = txt;
+    for (; line && *line; line = nl) {
+        nl = strchr(line, '\n');
+        if (nl) *nl++ = 0;
+        if (*line && *line != '\r') le_history_add(&hist, line);
+    }
+    free(txt);
+}
+
 void shell_init(void)
 {
     hist.max = g_conf.history;
     le_complete = complete;
+    history_load();
 }
 
 extern int hal_eof(void) __attribute__((weak));
@@ -1632,6 +1747,7 @@ void shell_main(void)
             con_printf("%s\n", line);
         }
         le_history_add(&hist, line);
+        history_save();
         shell_exec(line);
         con_flush();
     }

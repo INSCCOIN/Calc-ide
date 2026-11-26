@@ -1,0 +1,22 @@
+selftest
+ykyplay T300 C5 E5 G5
+play C4 X9
+gpio
+gpio 2 1
+gpio 12 1
+echo remember-me
+
+----
+memory     PASS
+sd card    PASS
+page file  PASS
+compiler   PASS
+vm         PASS
+display    PASS
+keyboard   PASS  got 'k'
+sound      PASS
+0 failed
+play: bad note 'X9'
+free pins: 0 1 2 3 4 5 8 9 20 21 22 28
+GP2 = 1
+gpio: 12: pin is used by the PicoCalc

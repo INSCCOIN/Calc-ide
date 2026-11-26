@@ -349,3 +349,62 @@ int hal_pf_erase(int page)
 
 int hal_sd_present(void) { return 1; }
 int hal_sd_hc(void) { return 1; }
+
+/* ------------------------------------------------------------------ */
+/* host stand-ins: PCM is counted, GPIO is a register file, and each   */
+/* UART loops its output back to its input (for tests)                 */
+/* ------------------------------------------------------------------ */
+
+static unsigned long pcm_samples;
+void hal_pcm_start(int rate) { (void)rate; pcm_samples = 0; }
+void hal_pcm_write(uint8_t v) { (void)v; pcm_samples++; }
+void hal_pcm_stop(void) { }
+
+static int gpio_val[30], gpio_dir[30];
+
+int hal_gpio_free(int pin)
+{
+    if (pin < 0 || pin > 29) return 0;
+    if (pin == 6 || pin == 7 || (pin >= 10 && pin <= 19) || pin == 26 || pin == 27) return 0;
+    if ((pin >= 23 && pin <= 25) || pin == 29) return 0;
+    return 1;
+}
+
+int hal_gpio_mode(int pin, int mode)
+{
+    if (!hal_gpio_free(pin)) return 0;
+    gpio_dir[pin] = mode;
+    if (mode == HAL_GPIO_PULLUP) gpio_val[pin] = 1;
+    if (mode == HAL_GPIO_PULLDOWN) gpio_val[pin] = 0;
+    return 1;
+}
+
+int hal_gpio_write(int pin, int v) { if (!hal_gpio_free(pin)) return 0; gpio_val[pin] = v != 0; return 1; }
+int hal_gpio_read(int pin) { if (!hal_gpio_free(pin)) return -1; return gpio_val[pin]; }
+
+static uint8_t uq[2][256];
+static int uh[2], ut[2], uopen[2];
+
+int hal_uart_open(int port, int baud)
+{
+    if (port < 0 || port > 1 || baud < 300 || baud > 3000000) return 0;
+    uopen[port] = 1;
+    uh[port] = ut[port] = 0;
+    return 1;
+}
+void hal_uart_close(int port) { if (port >= 0 && port < 2) uopen[port] = 0; }
+int hal_uart_putc(int port, int c)
+{
+    if (port < 0 || port > 1 || !uopen[port]) return -1;
+    if ((ut[port] + 1) % 256 != uh[port]) { uq[port][ut[port]] = (uint8_t)c; ut[port] = (ut[port] + 1) % 256; }
+    return c & 255;
+}
+int hal_uart_getc(int port)
+{
+    int c;
+    if (port < 0 || port > 1 || !uopen[port] || uh[port] == ut[port]) return -1;
+    c = uq[port][uh[port]];
+    uh[port] = (uh[port] + 1) % 256;
+    return c;
+}
+int hal_uart_available(int port) { return port >= 0 && port < 2 && uopen[port] && uh[port] != ut[port]; }

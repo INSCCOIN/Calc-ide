@@ -2,7 +2,7 @@
 #ifndef LINEEDIT_H
 #define LINEEDIT_H
 
-#define LE_HIST_MAX 64
+#define LE_HIST_MAX 200
 
 typedef struct {
     char *lines[LE_HIST_MAX];

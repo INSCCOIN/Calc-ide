@@ -45,6 +45,7 @@ typedef struct {
     int show_stats;     /* statistics after every program */
     int auto_close;     /* editor: close brackets and quotes */
     int max_files;      /* editor: files open at once */
+    int history_save;   /* keep command history on the SD card */
     char splash_image[VFS_PATH];  /* a .bmp for the boot screen, or empty */
     char prompt[32];    /* prompt format, $p = path */
     char autoexec[96];  /* command run at boot */

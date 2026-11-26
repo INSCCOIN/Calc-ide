@@ -115,6 +115,14 @@ def main():
             missing = [l for l in expected.strip().splitlines() if l.strip() and l.strip() not in out]
             report(not missing, "shell/" + name, "missing: %r\n--- output\n%s" % (missing, out + err))
 
+    # command history survives a restart (a second session in the same card)
+    if os.path.exists(IDE):
+        hw = os.path.join(work, "sh_hardware")
+        if os.path.isdir(hw):
+            rc, out, err = run([IDE], hw, inp=b"history\n")
+            report("echo remember-me" in out and "selftest" in out and "2  play" in out,
+                   "shell/history saved to SD", out[-800:])
+
     print("\n%d passed, %d failed" % (passed, failed))
     shutil.rmtree(work, ignore_errors=True)
     return 1 if failed else 0

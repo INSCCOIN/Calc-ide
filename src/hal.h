@@ -57,6 +57,23 @@ void hal_serial_write(const char *s, int n);  /* USB serial mirror */
 
 void hal_tone(int hz, int ms);          /* ms <= 0: start and return */
 void hal_tone_off(void);
+void hal_pcm_start(int rate);           /* 8-bit samples to the speakers */
+void hal_pcm_write(uint8_t sample);     /* 128 = silence; caller paces */
+void hal_pcm_stop(void);
+
+/* GPIO for programs; pins the board uses are refused */
+enum { HAL_GPIO_IN = 0, HAL_GPIO_OUT = 1, HAL_GPIO_PULLUP = 2, HAL_GPIO_PULLDOWN = 3 };
+int  hal_gpio_mode(int pin, int mode);  /* 1 ok, 0 reserved/invalid */
+int  hal_gpio_write(int pin, int v);
+int  hal_gpio_read(int pin);            /* -1 if not usable */
+int  hal_gpio_free(int pin);            /* 1 if programs may use it */
+
+/* UART: port 0 = GP0 TX / GP1 RX, port 1 = GP4 TX / GP5 RX */
+int  hal_uart_open(int port, int baud); /* 1 ok */
+void hal_uart_close(int port);
+int  hal_uart_putc(int port, int c);
+int  hal_uart_getc(int port);           /* -1 if nothing waiting */
+int  hal_uart_available(int port);
 
 void hal_backlight(int level);
 void hal_kbdlight(int level);
