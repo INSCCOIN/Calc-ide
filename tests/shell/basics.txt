@@ -7,10 +7,16 @@ run structs.c
 run files.c
 cat demo.txt
 pf set greeting hello there
+stored tools/hi
 pf view greeting
 run pfdemo.c
 run pfdemo.cbc
 pf set demo/sub/x 1
+cc hello.c -o /bin/hi.cbc
+hi
+pf store /bin/hi.cbc tools/hi
+pf run tools/hi
+run pf:tools/hi
 pf tree
 alias ll=ls -l
 ll /calcide
@@ -31,6 +37,7 @@ total      4.90
 read 6 lines
 line 5: 5 squared is 25
 hello there
+stored tools/hi
 This program has run 1 time(s).
 This program has run 2 time(s).
 |-- demo/

@@ -1,1 +1,273 @@
-# Calc-ide
+# CalcIDE 0.1
+
+**A self-hosting C IDE for the ClockworkPi PicoCalc.** It boots into a DOS-style command line. From there you write, edit, compile and run C entirely on the PicoCalc, with no PC involved. Source, compiler and programs all live on the SD card.
+
+## Credits
+
+CalcIDE builds on these projects:
+
+| Project | Used for |
+|---|---|
+| [INSCCOIN/CalcOS](https://github.com/INSCCOIN/CalcOS) | The LCD, keyboard and SD-card drivers (adapted), the flash STORE design that became `pf`, the boot-time safe mode and the sound code. |
+| [clockworkpi/PicoCalc](https://github.com/clockworkpi/PicoCalc) | Hardware reference: pin map, ST7365P init sequence, keyboard-controller registers (`picocalc_keyboard/reg.h`), battery and power-off protocol, and the SD boot launcher (`pico_multi_booter`) memory layout. |
+| [raspberrypi/pico-sdk](https://github.com/raspberrypi/pico-sdk) | The SDK the firmware is built on (BSD-3-Clause). |
+| [FatFs by ChaN](https://elm-chan.org/fsw/ff/), via [zephyrproject-rtos/fatfs](https://github.com/zephyrproject-rtos/fatfs) | The FAT12/16/32 and exFAT file system with long file names (FatFs licence, in `lib/fatfs`). |
+| [dhepper/font8x8](https://github.com/dhepper/font8x8) | The IBM PC style 8×8 glyphs behind the 8×10 MS-DOS font (public domain). |
+| X11 misc-fixed `5x8` by Markus Kuhn | The glyphs behind the 5×10 font for 64-column mode (public domain). |
+
+Everything else is new: the Tiny-C compiler, the bytecode VM, the shell, the editor, the console, the page file and the tests. It is MIT licensed, like CalcOS.
+
+---
+
+![The shell](docs/shell.png) ![The editor](docs/editor.png)
+
+![64 columns](docs/editor64.png) ![A program](docs/mandel.png)
+
+## Contents
+
+- [What's in it](#whats-in-it)
+- [Downloads and flashing](#downloads-and-flashing)
+- [First boot](#first-boot)
+- [Quick start](#quick-start)
+- [The display](#the-display)
+- [The editor](#the-editor)
+- [Settings: CalcIDE.conf](#settings-calcideconf)
+- [The page file](#the-page-file)
+- [Memory](#memory)
+- [Building](#building)
+- [Tests](#tests)
+- [Troubleshooting](#troubleshooting)
+- [Project layout](#project-layout)
+
+The full command reference is in **[commands.md](commands.md)**. The C dialect, built-in library and VM are covered in **[compiler.md](compiler.md)**.
+
+## What's in it
+
+- **A shell** with 48 commands, plus DOS and Linux synonyms (`dir`/`ls`, `del`/`rm`, `type`/`cat`, ...), for 64 command names in all. These include the system commands you asked for (`battery`, `shutdown`, `reset`, `width`, `cls`, `color`/`theme`, `font`, `cursor`, `beep`, `mute`, `df`, `tree`, `sd`, `mount`/`unmount`, `sync`, `mem`/`free`, `uptime`, `version`, `temp`, `clock`, `exit`, `bye`, `history`, `alias`, `help`) and Linux/DOS-style file commands (`ls`/`dir`, `cd`, `mkdir`, `rm`, `cp`, `mv`, `cat`, `more`, ...). The shell also has command history, tab completion and aliases.
+- **A full-screen editor** with line numbers, syntax colouring (keywords, types, strings, comments, numbers, preprocessor), auto-indent, Ctrl+F search, go-to-line, line cut/copy/paste, and a status line showing the file name, cursor position and free memory in KB. **F5** compiles and runs; a compile error jumps straight to the offending line.
+- **A C compiler** (Tiny-C dialect, closer to "most of C") that runs on the RP2350. It handles `int`, `char`, `short`, `unsigned`, `float`/`double`, structs, unions, enums, typedefs, pointers to pointers, function pointers, arrays (multi-dimensional too), `malloc`/`free`, `switch`, `goto`, `static`, and a real preprocessor with `#include`, `#define` (with parameters), `#if`/`#ifdef`/`#elif`. Comments can be `//`, `/* */` or `##`.
+- **It is self-hosting.** The compiler is written in the dialect it accepts. Compiled by itself and run on the VM, it produces a byte-identical copy of itself. The test suite checks this on every run.
+- **A bytecode VM** with runtime checks. It catches null pointers, out-of-bounds memory access, stack overflow, division by zero, bad `free()`, and calls through null function pointers. Errors report the function and source line, and Ctrl+C breaks out of any program.
+- **124 built-in functions**: stdio (including files on the SD card), string, ctype, stdlib, math, and PicoCalc hardware (screen, colours, keyboard, sound, backlight, battery, CPU speed, temperature, pixels, and the page file).
+- **A page file (`pf`)**: 768 KB of on-board flash for named objects. It stores text, data and even programs, which can run straight from flash. The design follows CalcOS's STORE.
+- **All settings live in `/CalcIDE.conf`** in the root of the SD card: colours (shell and editor syntax colours), width/font, cursor, sound, backlight, clock, memory sizes, prompt, autoexec and aliases.
+
+## Downloads and flashing
+
+Everything is in `dist/`:
+
+| File | For |
+|---|---|
+| `calcide-0.1-rp2350.uf2` | PicoCalc with a **Raspberry Pi Pico 2 / Pico 2 W** (RP2350), stand-alone |
+| `calcide-0.1-rp2040.uf2` | PicoCalc with a **Raspberry Pi Pico / Pico W** (RP2040), stand-alone |
+| `calcide-0.1-rp2350-sdboot.bin` | RP2350 app for the PicoCalc **SD boot launcher** (`pico_multi_booter`) |
+| `calcide-0.1-rp2040-sdboot.bin` | RP2040 app for the SD boot launcher |
+| `calcide-0.1.zip` | Everything above plus the full source and documentation |
+
+**Stand-alone:** hold BOOTSEL on the Pico, plug in USB, and copy the `.uf2` onto the drive that appears. From a running CalcIDE, the `bootsel` command does the same without opening the case.
+
+**From the PicoCalc launcher:** copy the `-sdboot.bin` into the launcher's apps folder on the SD card and pick it from the menu. `exit` restarts the Pico, which brings you back to the launcher menu.
+
+The RP2350 is the main target. The RP2040 build has the same features, but it has half the RAM: programs get about 150 KB instead of about 400 KB, and the compiler cannot compile its own (large) source there.
+
+## First boot
+
+1. Put a FAT32 (or exFAT/FAT16) formatted SD card in the PicoCalc and switch on.
+2. CalcIDE creates `/CalcIDE.conf` with default settings and shows the banner.
+3. Type **`install`**. This writes the example programs to `/calcide/examples/` and the compiler's own source to `/calcide/cc/`. Both are built into the firmware.
+4. Type `cd /calcide/examples`, then `run hello.c`.
+
+Holding **Esc** while switching on starts in safe mode, which skips the saved CPU clock and the `autoexec` command.
+
+The console is mirrored to **USB serial** at any baud rate (`/dev/ttyACM0`, or a COM port). That terminal can also type into CalcIDE, so the arrow keys work there too.
+
+## Quick start
+
+```
+/> cd /calcide/examples
+/calcide/examples> edit hello.c        (F5 = compile and run, Esc = quit)
+/calcide/examples> run fib.c           (compiles if needed, then runs)
+/calcide/examples> cc primes.c         (compile only: writes primes.cbc)
+/calcide/examples> primes              (run a .cbc by name, like DOS)
+/calcide/examples> run pfdemo.c        (a program that keeps data in flash)
+```
+
+To self-host the compiler on the device:
+
+```
+/> cc /calcide/cc/cc.c -o /bin/cc.cbc      (native compiler builds the VM compiler; 'install' made /bin)
+/> run /bin/cc.cbc hello.c -o hello.cbc    (the VM compiler, written in Tiny-C, compiles)
+/> run hello.cbc
+```
+
+## The display
+
+The panel is 320×320 pixels. CalcIDE uses 32 rows of 10-pixel text in two modes:
+
+| Mode | Font | Grid | Why |
+|---|---|---|---|
+| `width 40` | 8×10 (IBM PC style, MS-DOS look) | **40 × 32** | 320 / 8 = 40 |
+| `width 64` | 5×10 (X11 fixed 5×8) | **64 × 32** | 320 / 5 = 64, the narrowest legible glyph |
+
+`font 8x10` and `font 5x10` are the same switch, seen from the font side. Both fonts include the CP437 shade, box-drawing and block characters (0xB0–0xDF), so programs can draw DOS-style frames.
+
+There are 16 colours with the CGA/DOS palette, and the console understands ANSI escape sequences (colours, cursor movement, clearing). Programs written for a VT100 or ANSI.SYS display correctly.
+
+## The editor
+
+`edit FILE` opens the editor. If the file doesn't exist yet, it starts empty.
+
+| Key | Action |
+|---|---|
+| Arrows, Home, End, PgUp, PgDn | move (Home toggles first non-blank / column 0) |
+| Ctrl+T | jump to top / bottom |
+| Ctrl+G | go to line |
+| **Ctrl+F** | find (case-insensitive); **F3** or Ctrl+N finds the next |
+| Ctrl+S | save; Ctrl+O opens another file |
+| Ctrl+X / Ctrl+C / Ctrl+V | cut / copy / paste line |
+| Ctrl+D | duplicate line; Ctrl+K deletes the line |
+| Tab | indent to the next tab stop (spaces) |
+| **F9** / Ctrl+B | compile; on an error the cursor jumps to the line |
+| **F5** / Ctrl+R | save, compile and run |
+| F1 | help |
+| Esc / Ctrl+Q | quit (asks to save if modified) |
+
+Rows 1–30 hold text, row 0 shows key hints, and row 31 is the status line: file name (with `*` if modified), line, column and free memory in KB.
+
+## Settings: CalcIDE.conf
+
+`/CalcIDE.conf` is plain text in `key = value` form, with `#` comments. CalcIDE writes it whenever you change a setting from the shell (`color`, `width`, `cursor`, `mute`, `alias`, `set ...`). You can also edit it in the editor: `edit /CalcIDE.conf`, then `set reload`. Colours accept 0–15 or a name (`black red green brown blue magenta cyan lightgray darkgray lightred lightgreen yellow lightblue lightmagenta lightcyan white`).
+
+| Key | Default | Meaning |
+|---|---|---|
+| `width` | 40 | 40 or 64 columns (`font` follows it) |
+| `fg`, `bg` | lightgray, black | shell colours |
+| `editor_fg`, `editor_bg` | white, blue | editor text |
+| `keyword_color` | yellow | `if while return ...` |
+| `type_color` | lightcyan | `int char struct ...` |
+| `string_color` | lightgreen | strings and characters |
+| `comment_color` | lightgray | comments |
+| `number_color` | lightmagenta | numbers |
+| `preproc_color` | lightred | `#include`, `#define` |
+| `linenum_color` | cyan | the line-number gutter |
+| `status_fg`, `status_bg` | black, cyan | editor title and status bars |
+| `match_color` | brown | search match background |
+| `syntax`, `line_numbers`, `autoindent` | 1 | editor switches |
+| `tabsize` | 4 | 1–8 |
+| `cursor`, `cursor_style` | 1, 0 | cursor on/off; 0 = underline, 1 = block |
+| `mute`, `volume`, `key_click` | 0, 100, 0 | sound |
+| `backlight`, `kbd_backlight` | 200, 64 | 0–255 |
+| `cpu_mhz` | 0 | 0 = default clock (150 MHz on RP2350); applied at boot |
+| `vm_mem_kb` | 0 | memory for programs; 0 = all free memory |
+| `vm_stack_kb` | 32 | program stack |
+| `history` | 32 | shell history lines |
+| `prompt` | `$p> ` | `$p` = current directory, `$g` = `>` |
+| `home` | `/` | start-up directory |
+| `autoexec` | | a command run at boot (an alias can chain several) |
+| `alias.NAME` | | `alias.ll = ls -l` |
+| `lcd_bits`, `lcd_madctl`, `lcd_invert`, `bl_swap` | 16, 0x48, 1, 0 | panel quirks (see [Troubleshooting](#troubleshooting)) |
+
+Themes set the shell and editor colours in one go: `theme dos`, `classic`, `turbo`, `green`, `amber`, `paper`, `matrix` or `night`.
+
+## The page file
+
+`pf` manages 768 KB at the top of the Pico's flash: 192 pages of 4 KB, with page 0 used as a directory. Objects have names of up to 39 characters, and a `/` in a name shows up as a folder in `pf tree`. Reading costs no RAM, because objects are read in place through the XIP window. Programs (`.cbc`) stored there run directly from flash with `run pf:NAME`.
+
+```
+pf set greeting hello world     store a text value
+pf store prog.cbc tools/prog    copy a file from the SD card
+pf view greeting                print a text object
+pf dump tools/prog              hex dump
+pf list | pf tree | pf free     what's there and how much space is left
+pf get tools/prog copy.cbc      copy an object back to the SD card
+pf run tools/prog               run a program from flash
+pf wipe greeting                delete one object
+pf format                       erase everything (asks first)
+```
+
+From C: `pf_read(name, buf, max)` and `pf_write(name, buf, len)`.
+
+Replacing an object writes the new copy first and switches the directory last, so a power cut cannot lose both. Flash wears out after roughly 100,000 erases per page, so the page file is for saving data, not for values that change every second.
+
+## Memory
+
+| | RP2350 | RP2040 |
+|---|---|---|
+| SRAM | 520 KB | 264 KB |
+| firmware static RAM (incl. 24/12 KB stack) | 60 KB | 49 KB |
+| free heap at the prompt | ~450 KB | ~200 KB |
+| memory a program gets (auto) | ~400 KB | ~150 KB |
+| flash used by the firmware | 335 KB | 337 KB |
+
+The compiler, the editor buffer and the VM each allocate memory only while they run and free it on return, so each tool gets nearly all of RAM. `mem` shows the free heap and the largest free block. Compiling a small program takes about 70 KB, mostly the built-in library's declarations. Compiling the compiler itself takes about 300 KB natively, or about 320 KB of VM memory for the self-hosted version.
+
+## Building
+
+You need CMake, `arm-none-eabi-gcc`, Python 3 and pico-sdk 2.1 or newer.
+
+```bash
+export PICO_SDK_PATH=/path/to/pico-sdk
+```
+
+```bash
+cmake -B build-pico2 -DPICO_BOARD=pico2 && cmake --build build-pico2 -j
+```
+
+```bash
+cmake -B build-pico -DPICO_BOARD=pico && cmake --build build-pico -j
+```
+
+```bash
+cmake -B build-pico2-sdboot -DPICO_BOARD=pico2 -DCALCIDE_SDBOOT=ON && cmake --build build-pico2-sdboot -j
+```
+
+`./tools/make_dist.sh` builds all four variants and the zip into `dist/`.
+
+There is also a host build that runs the whole IDE in a terminal. In it, a directory stands in for the SD card and a file stands in for the flash page file:
+
+```bash
+make && CALCIDE_ROOT=sdroot ./build-host/calcide
+```
+
+## Tests
+
+```bash
+make test
+```
+
+This runs 27 checks:
+
+- 11 C programs, each compiled by CalcIDE and run on the VM, with output compared against the same program built by the host gcc.
+- 10 deliberate errors (runtime and compile-time).
+- The self-hosting check: the native compiler compiles `cc.c`, the VM-hosted compiler compiles `cc.c` again, and the two `.cbc` files must be identical.
+- The self-hosted compiler builds a working program.
+- The firmware's FatFs layer against FAT32 and FAT16 disk images, checked afterwards with `fsck.vfat`.
+- Scripted shell and editor sessions.
+
+## Troubleshooting
+
+- **Blank screen, but the keyboard lights up:** the two backlight registers are swapped on your keyboard firmware. Connect over USB serial and type `set bl_swap 1`.
+- **Mirrored or rotated text:** `set lcd_madctl 0x08` (or `0x48`, `0xC8`), then `reset`.
+- **Wrong colours:** `set lcd_invert 0`; if the colours are still wrong, `set lcd_bits 18`.
+- **A bad clock setting:** hold Esc while switching on (safe mode), then `clock 0`.
+- **"no SD card mounted":** check the card is FAT/exFAT formatted, then `mount`.
+- **A program hangs:** Ctrl+C (or the Brk key) stops it.
+
+## Project layout
+
+```
+cc/            the compiler (Tiny-C, self-hosting) and the shared opcode list
+  cc.c         compiler, written in the dialect it compiles
+  ops.h        bytecode opcodes (shared with the VM)
+  prelude.h    the built-in library declarations and <picocalc.h>
+  ccport.h     lets gcc build cc.c into the firmware
+src/           portable core: shell, editor, console, VM, config, page file, VFS
+platform/
+  picocalc/    the board: LCD, keyboard, SD/FatFs, flash, sound, fonts
+  posix/       a terminal build for development and tests
+lib/fatfs/     FatFs R0.16
+examples/      example programs (also built into the firmware for 'install')
+tests/         test programs, error cases, shell scripts, the FatFs image test
+tools/         embed.py, make_fonts.py, cbcdis.py (disassembler), screenshot.py
+docs/          screenshots
+```

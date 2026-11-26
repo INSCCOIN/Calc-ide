@@ -48,6 +48,9 @@ int hal_is_batch(void) { return batch; }
 void hal_reconfigure(void) { }
 int hal_safe_mode(void) { return 0; }
 
+static void grid_dump(void);
+static void at_exit_grid(void) { grid_dump(); }
+
 void hal_init(void)
 {
     const char *b = getenv("CALCIDE_BATCH");
@@ -66,6 +69,7 @@ void hal_init(void)
         atexit(restore);
         fputs("\033[2J\033[?25l", stdout);
     }
+    if (getenv("CALCIDE_GRID")) atexit(at_exit_grid);
     pf_path = getenv("CALCIDE_PF");
     if (!pf_path) pf_path = "pagefile.bin";
     pf_mem = (uint8_t *)malloc(PF_PAGES * PF_PSIZE);
@@ -103,12 +107,12 @@ static int eof_seen;
 int hal_key(void)
 {
     int c, d, e;
-    if (eof_seen) return KEY_CTRL('c');
     c = rd_byte(0);
     if (c == -2) {
-        /* batch input finished: behave like a user pressing Ctrl+C forever */
+        /* scripted input finished: leave, as if the user switched off */
         eof_seen = 1;
-        return KEY_CTRL('c');
+        fflush(stdout);
+        exit(0);
     }
     if (c < 0) return -1;
     if (c == '\r') return '\n';
@@ -187,11 +191,29 @@ static const int ansi_bg[16] = {40, 41, 42, 43, 44, 45, 46, 47, 100, 101, 102, 1
 /* batch mode keeps a copy of the screen text; CALCIDE_SCREEN=1 prints it
  * whenever the editor waits for a key after drawing (used by the tests) */
 static char shadow[CON_ROWS][CON_MAXCOLS + 1];
+static cell_t shadow_cells[CON_ROWS][CON_MAXCOLS];
+static int shadow_cols = 40;
 static int shadow_dirty;
+
+/* CALCIDE_GRID=FILE writes the cells (for tools/screenshot.py) */
+static void grid_dump(void)
+{
+    const char *g = getenv("CALCIDE_GRID");
+    FILE *f;
+    int r, c;
+    if (!g || !(f = fopen(g, "w"))) return;
+    fprintf(f, "%d\n", shadow_cols);
+    for (r = 0; r < CON_ROWS; r++) {
+        for (c = 0; c < shadow_cols; c++) fprintf(f, "%04x ", shadow_cells[r][c]);
+        fputc('\n', f);
+    }
+    fclose(f);
+}
 
 void hal_dump_screen(void)
 {
     int r;
+    grid_dump();
     if (!shadow_dirty || !getenv("CALCIDE_SCREEN")) return;
     shadow_dirty = 0;
     fputs("\n=== screen ===\n", stdout);
@@ -213,7 +235,9 @@ void hal_draw_row(int row, const cell_t *cells, int cols, int cursor_col, int st
         for (c = 0; c < cols; c++) {
             int ch = cells[c] & 0xFF;
             shadow[row][c] = (char)(ch >= 32 && ch < 127 ? ch : '#');
+            shadow_cells[row][c] = cells[c];
         }
+        shadow_cols = cols;
         shadow[row][cols] = 0;
         shadow_dirty = 1;
         return;

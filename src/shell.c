@@ -417,9 +417,9 @@ static int c_mem(int argc, char **argv)
     con_printf("SRAM total    %4u KB\n", (unsigned)(tot / 1024));
     con_printf("heap free     %4u KB\n", (unsigned)(fr / 1024));
     con_printf("largest block %4u KB\n", (unsigned)(lg / 1024));
-    con_printf("program memory: %u KB (vm_mem_kb%s)\n",
+    con_printf("for programs  %4u KB%s\n",
                (unsigned)(g_conf.vm_mem_kb ? (unsigned)g_conf.vm_mem_kb : (unsigned)(lg > 24 * 1024 ? (lg - 16 * 1024) / 1024 : 0)),
-               g_conf.vm_mem_kb ? "" : " = auto");
+               g_conf.vm_mem_kb ? "" : " (auto)");
     return 0;
 }
 
@@ -638,16 +638,47 @@ static int c_cd(int argc, char **argv)
     return 0;
 }
 
-static int ls_one(const char *dir, int lng)
+static int ent_cmp(const void *a, const void *b)
+{
+    const vdirent *x = (const vdirent *)a, *y = (const vdirent *)b;
+    if (x->isdir != y->isdir) return y->isdir - x->isdir;   /* directories first */
+    return strcasecmp(x->name, y->name);
+}
+
+/* read a whole directory, sorted; caller frees */
+static vdirent *read_sorted(const char *dir, int *count)
 {
     void *d = vfs_opendir(dir);
-    vdirent e;
+    vdirent *list = 0, *nl;
+    int n = 0, cap = 0;
+    if (!d) return 0;
+    for (;;) {
+        if (n == cap) {
+            cap = cap ? cap * 2 : 32;
+            nl = (vdirent *)realloc(list, (size_t)cap * sizeof *list);
+            if (!nl) break;
+            list = nl;
+        }
+        if (!vfs_readdir(d, &list[n])) break;
+        n++;
+    }
+    vfs_closedir(d);
+    if (list) qsort(list, (size_t)n, sizeof *list, ent_cmp);
+    *count = n;
+    return list ? list : (vdirent *)calloc(1, sizeof(vdirent));
+}
+
+static int ls_one(const char *dir, int lng)
+{
+    int cnt = 0, idx;
+    vdirent *all = read_sorted(dir, &cnt), e;
     int n = 0, col = 0, cols = con_cols(), w;
     uint32_t bytes = 0;
-    if (!d) return -1;
+    if (!all) return -1;
     page_rows = 0;
     w = cols >= 64 ? 16 : 13;
-    while (vfs_readdir(d, &e)) {
+    for (idx = 0; idx < cnt; idx++) {
+        e = all[idx];
         n++;
         if (lng) {
             char sz[16];
@@ -678,7 +709,7 @@ static int ls_one(const char *dir, int lng)
             if (col >= cols) { col = 0; }
         }
     }
-    vfs_closedir(d);
+    free(all);
     if (!lng && col) con_puts("\n");
     if (lng) con_printf("%d entries, %u bytes\n", n, (unsigned)bytes);
     return n;
@@ -970,7 +1001,7 @@ int shell_compile(const char *src, char *out, int *errline)
     err_line_out = 0;
     if (rc == 0) {
         con_set_fg(8);
-        con_printf("compiled in %u ms, %u KB used\n", (unsigned)(hal_millis() - t0), (unsigned)(cc_peak_bytes() / 1024));
+        con_printf("ok, %u ms, %u KB\n", (unsigned)(hal_millis() - t0), (unsigned)(cc_peak_bytes() / 1024));
         con_default_color();
     }
     return rc;
@@ -1056,6 +1087,7 @@ static int c_install(int argc, char **argv)
 {
     int i, n = 0, force = argc > 1 && !strcmp(argv[1], "-f");
     if (!need_sd("install")) return 1;
+    if (!vfs_stat("/bin", 0, 0)) vfs_mkdir("/bin");   /* programs found by name */
     for (i = 0; i < embedded_count; i++) {
         const EmbeddedFile *f = &embedded_files[i];
         char dir[VFS_PATH];

@@ -196,7 +196,7 @@ int hal_poll_break(void (*queue)(int key))
 int hal_modifiers(void) { return kbd_modifiers(); }
 
 /* ------------------------------------------------------------------ */
-/* sound: GP26 and GP27 driven in antiphase                            */
+/* sound: GP26 (left) and GP27 (right)                                */
 /* ------------------------------------------------------------------ */
 
 #define SND_L 26
@@ -240,8 +240,9 @@ void hal_tone(int hz, int ms)
     pwm_set_wrap(slice_r, (uint16_t)top);
     pwm_set_gpio_level(SND_L, (uint16_t)level);
     pwm_set_gpio_level(SND_R, (uint16_t)level);
-    if (slice_l == slice_r) pwm_set_output_polarity(slice_r, false, true);
-    else pwm_set_output_polarity(slice_r, true, true);
+    /* both speakers in phase, as in the ClockworkPi pwm_sound example */
+    pwm_set_output_polarity(slice_l, false, false);
+    if (slice_r != slice_l) pwm_set_output_polarity(slice_r, false, false);
     pwm_set_enabled(slice_l, true);
     pwm_set_enabled(slice_r, true);
     if (ms > 0) {

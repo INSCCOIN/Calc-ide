@@ -4014,7 +4014,9 @@ int main(int argc, char **argv)
         printf("    code %d, data %d, bss %d, %d functions, %d KB compiler memory\n",
                cpos, spos + dpos, bss, nfuncs, arena_total / 1024);
     } else {
-        printf("%s: %d bytes code, %d data, %d bss\n", out, cpos, spos + dpos, bss);
+        n = strlen(out);
+        while (n > 0 && out[n - 1] != '/') n--;
+        printf("%s: %d code, %d data, %d bss\n", out + n, cpos, spos + dpos, bss);
     }
     return 0;
 }

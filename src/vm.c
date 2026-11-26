@@ -1127,7 +1127,7 @@ static void vm_exec(VM *vm)
         if (--budget == 0) {
             budget = 4096;
             vm->icount += 4096;
-            if (hal_millis() - vm->last_poll >= 25) {
+            if (hal_millis() - vm->last_poll >= 50) {
                 vm->last_poll = hal_millis();
                 SYNC();
                 if (con_poll_break()) vm_fail(vm, "break (Ctrl+C)");

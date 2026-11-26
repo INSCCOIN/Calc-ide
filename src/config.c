@@ -208,6 +208,7 @@ int conf_save(void)
     emit(&p, end, "#  lightred lightgreen yellow lightblue lightmagenta lightcyan white)\n\n");
     for (i = 0; ikeys[i].key; i++) {
         if (ikeys[i].color) emit(&p, end, "%s = %s\n", ikeys[i].key, conf_color_name(*ikeys[i].ip));
+        else if (ikeys[i].ip == &g_conf.lcd_madctl) emit(&p, end, "%s = 0x%02X\n", ikeys[i].key, *ikeys[i].ip);
         else emit(&p, end, "%s = %d\n", ikeys[i].key, *ikeys[i].ip);
     }
     emit(&p, end, "prompt = \"%s\"\n", g_conf.prompt);
