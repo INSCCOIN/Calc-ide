@@ -148,7 +148,7 @@ int vfs_readdir(void *dp, vdirent *e)
         if (last != FR_OK || !fi.fname[0]) return 0;
         if (fi.fattrib & (AM_HID | AM_SYS)) continue;
         if (fi.fname[0] == '.') continue;
-        snprintf(e->name, sizeof e->name, "%s", fi.fname);
+        snprintf(e->name, sizeof e->name, "%.127s", fi.fname);
         e->isdir = (fi.fattrib & AM_DIR) != 0;
         e->size = (uint32_t)fi.fsize;
         return 1;

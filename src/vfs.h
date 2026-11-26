@@ -14,7 +14,7 @@
 typedef struct vfile vfile;
 
 typedef struct {
-    char     name[96];
+    char     name[128];
     int      isdir;
     uint32_t size;
 } vdirent;

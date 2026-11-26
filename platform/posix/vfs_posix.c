@@ -127,7 +127,7 @@ int vfs_readdir(void *dp, vdirent *e)
         char full[1400];
         struct stat st;
         if (de->d_name[0] == '.') continue;
-        snprintf(e->name, sizeof e->name, "%s", de->d_name);
+        snprintf(e->name, sizeof e->name, "%.127s", de->d_name);
         snprintf(full, sizeof full, "%s/%s", w->path, de->d_name);
         if (stat(full, &st) != 0) continue;
         e->isdir = S_ISDIR(st.st_mode);
